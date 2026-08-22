@@ -1,0 +1,14 @@
+{
+  "appId": "com.dukkani.app",
+  "appName": "دُكّاني",
+  "webDir": "www",
+  "server": {
+    "url": "https://dukkani-app.onrender.com",
+    "cleartext": true
+  },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    }
+  }
+}
