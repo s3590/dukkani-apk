@@ -33,7 +33,9 @@ jobs:
       run: mkdir www && echo "<html><body>Loading...</body></html>" > www/index.html
 
     - name: Add Android Platform
-      run: npx cap add android
+      run: |
+        npx cap add android
+        npx cap sync android
 
     - name: Generate App Icons
       run: |
