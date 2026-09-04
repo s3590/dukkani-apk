@@ -4,7 +4,10 @@
   "webDir": "www",
   "server": {
     "url": "https://dukkani-app.onrender.com",
-    "cleartext": true
+    "cleartext": true,
+    "allowNavigation": [
+      "dukkani-app.onrender.com"
+    ]
   },
   "plugins": {
     "PushNotifications": {
