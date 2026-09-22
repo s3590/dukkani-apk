@@ -4,7 +4,8 @@
   "webDir": "www",
   "server": {
     "url": "https://dukkani-app.onrender.com",
-    "cleartext": true,
+    "cleartext": false,
+    "androidScheme": "https",
     "allowNavigation": [
       "dukkani-app.onrender.com"
     ]
@@ -12,6 +13,19 @@
   "plugins": {
     "PushNotifications": {
       "presentationOptions": ["badge", "sound", "alert"]
+    },
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "backgroundColor": "#f8fafc",
+      "showSpinner": false,
+      "androidSplashResourceName": "splash",
+      "splashFullScreen": true,
+      "splashImmersive": true
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#0ba360",
+      "overlaysWebView": false
     }
   }
 }
