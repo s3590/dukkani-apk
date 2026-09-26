@@ -14,8 +14,12 @@ on:
         required: true
         default: 'https://dukkani-app.onrender.com/static/logo_customer.png'
 
+permissions:
+  contents: write # 👈 مطلوب لإنشاء روابط تحميل مباشرة (Releases )
+
 jobs:
   build:
+    name: Build, sign and publish Android APK
     runs-on: ubuntu-latest
 
     steps:
@@ -46,10 +50,16 @@ jobs:
         npx cap add android
         npx cap sync android
 
-    - name: Change App Name Dynamically
+    - name: Change App Name and Version Dynamically
+      env:
+        RUN_NUMBER: ${{ github.run_number }}
       run: |
         APP_NAME="${{ github.event.inputs.appName || 'دُكّاني أعمال' }}"
+        # تغيير اسم التطبيق
         sed -i "s/<string name=\"app_name\">.*<\/string>/<string name=\"app_name\">$APP_NAME<\/string>/g" android/app/src/main/res/values/strings.xml
+        # تغيير رقم الإصدار ليتطابق مع كل بناء تلقائياً
+        sed -i -E "s/versionCode[[:space:]]+[0-9]+/versionCode ${RUN_NUMBER}/g" android/app/build.gradle
+        sed -i -E "s/versionName[[:space:]]+\"[^\"]+\"/versionName \"1.0.${RUN_NUMBER}\"/g" android/app/build.gradle
 
     - name: Generate App Icons
       run: |
@@ -75,29 +85,86 @@ jobs:
 
     - name: Inject Firebase Push Notifications
       run: |
-        # إضافة البلوجن إلى build.gradle الأساسي
         sed -i '/dependencies {/a \        classpath "com.google.gms:google-services:4.3.15"' android/build.gradle
-        # إضافة المكتبات وتفعيل البلوجن في app/build.gradle
         echo "apply plugin: 'com.google.gms.google-services'" >> android/app/build.gradle
-        sed -i '/dependencies {/a \    implementation platform("com.google.firebase:firebase-bom:32.1.1"  )\n    implementation "com.google.firebase:firebase-messaging"' android/app/build.gradle
+        sed -i '/dependencies {/a \    implementation platform("com.google.firebase:firebase-bom:32.1.1" )\n    implementation "com.google.firebase:firebase-messaging"' android/app/build.gradle
 
-    - name: Generate Release Keystore
+    - name: Build unsigned release APK
+      working-directory: android
       run: |
-        keytool -genkey -v -keystore release.keystore -alias my-key-alias -keyalg RSA -keysize 2048 -validity 10000 -storepass "dukkani123" -keypass "dukkani123" -dname "CN=Dukkani, OU=App, O=Company, L=City, ST=State, C=Country"
-        mv release.keystore android/app/
-
-    - name: Build and Sign Release APK
-      run: |
-        cd android
         chmod +x gradlew
-        ./gradlew assembleRelease \
-          -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/android/app/release.keystore \
-          -Pandroid.injected.signing.store.password=dukkani123 \
-          -Pandroid.injected.signing.key.alias=my-key-alias \
-          -Pandroid.injected.signing.key.password=dukkani123
+        ./gradlew assembleRelease
 
-    - name: Upload VIP Release APK
-      uses: actions/upload-artifact@v5
+    - name: Align, Sign and Extract SHA-256
+      env:
+        KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      run: |
+        # 1. فك تشفير المفتاح
+        printf '%s' "$KEYSTORE_BASE64" | base64 --decode > release.keystore
+        
+        BUILD_TOOLS_DIR="$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)"
+        APK_PATH="android/app/build/outputs/apk/release/app-release-unsigned.apk"
+        FINAL_APK="Dukkani-Release.apk"
+
+        # 2. محاذاة وتوقيع التطبيق
+        "$BUILD_TOOLS_DIR/zipalign" -f -p 4 "$APK_PATH" app-aligned.apk
+        "$BUILD_TOOLS_DIR/apksigner" sign \
+          --ks release.keystore \
+          --ks-key-alias "$KEY_ALIAS" \
+          --ks-pass "pass:$KEYSTORE_PASSWORD" \
+          --key-pass "pass:$KEY_PASSWORD" \
+          --out "$FINAL_APK" \
+          app-aligned.apk
+
+        # 3. استخراج البصمة (SHA-256) لحفظها في السيرفر
+        SHA_OUTPUT=$("$BUILD_TOOLS_DIR/apksigner" verify --verbose --print-certs "$FINAL_APK" | grep "SHA-256 digest:" | head -n 1)
+        echo "SHA256_FINGERPRINT=${SHA_OUTPUT}" >> $GITHUB_ENV
+
+    - name: Publish GitHub Release (Direct APK Link)
+      uses: softprops/action-gh-release@v2
       with:
-        name: ${{ github.event.inputs.appName || 'Dukkani' }}-Release-APK
-        path: android/app/build/outputs/apk/release/app-release.apk
+        tag_name: v1.0.${{ github.run_number }}
+        target_commitish: ${{ github.sha }}
+        name: ${{ github.event.inputs.appName || 'دُكّاني' }} - الإصدار 1.0.${{ github.run_number }}
+        body: |
+          تطبيق بقالة جاهز وموقّع.
+          البصمة: `${{ env.SHA256_FINGERPRINT }}`
+        files: Dukkani-Release.apk
+        make_latest: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Send Telegram Success Notification
+      if: ${{ success() }}
+      env:
+        BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        ADMIN_ID: ${{ secrets.ADMIN_ID }}
+        RUN_NUMBER: ${{ github.run_number }}
+        REPOSITORY: ${{ github.repository }}
+        APP_NAME: ${{ github.event.inputs.appName || 'دُكّاني أعمال' }}
+        SHA_FINGERPRINT: ${{ env.SHA256_FINGERPRINT }}
+      run: |
+        MESSAGE="✅ **تم بناء التطبيق بنجاح!**
+        
+        🏪 البقالة: ${APP_NAME}
+        📦 الإصدار: 1.0.${RUN_NUMBER}
+        
+        🔗 **رابط التحميل المباشر (APK):**
+        https://github.com/${REPOSITORY}/releases/download/v1.0.${RUN_NUMBER}/Dukkani-Release.apk
+        
+        🔐 **بصمة التطبيق (انسخها للسيرفر ):**
+        \`${SHA_FINGERPRINT}\`"
+
+        curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+          --data-urlencode "chat_id=${ADMIN_ID}" \
+          --data-urlencode "text=${MESSAGE}" \
+          --data-urlencode "parse_mode=Markdown"
+
+    - name: Cleanup Sensitive Files
+      if: ${{ always( ) }}
+      run: |
+        rm -f release.keystore
+        rm -f app-aligned.apk
