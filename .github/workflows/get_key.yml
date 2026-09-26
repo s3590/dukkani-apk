@@ -1,0 +1,17 @@
+name: Generate Keystore (Temporary)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Generate and Print Base64
+      run: |
+        keytool -genkey -v -keystore release.keystore -alias my-key-alias -keyalg RSA -keysize 2048 -validity 10000 -storepass "dukkani123" -keypass "dukkani123" -dname "CN=Dukkani, OU=App, O=Company, L=City, ST=State, C=Country"
+        echo "👇 انسخ النص الطويل الذي بالأسفل بالكامل 👇"
+        echo "====================================================="
+        base64 -w 0 release.keystore
+        echo ""
+        echo "====================================================="
