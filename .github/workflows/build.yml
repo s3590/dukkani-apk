@@ -50,16 +50,18 @@ jobs:
         npx cap add android
         npx cap sync android
 
-    - name: Change App Name and Version Dynamically
+    - name: Change App Name, Version and Permissions
       env:
         RUN_NUMBER: ${{ github.run_number }}
       run: |
         APP_NAME="${{ github.event.inputs.appName || 'دُكّاني أعمال' }}"
         # تغيير اسم التطبيق
         sed -i "s/<string name=\"app_name\">.*<\/string>/<string name=\"app_name\">$APP_NAME<\/string>/g" android/app/src/main/res/values/strings.xml
-        # تغيير رقم الإصدار ليتطابق مع كل بناء تلقائياً
+        # تغيير رقم الإصدار
         sed -i -E "s/versionCode[[:space:]]+[0-9]+/versionCode ${RUN_NUMBER}/g" android/app/build.gradle
         sed -i -E "s/versionName[[:space:]]+\"[^\"]+\"/versionName \"1.0.${RUN_NUMBER}\"/g" android/app/build.gradle
+        # 👇 السطر السحري لإعطاء التطبيق صلاحية الكاميرا لفتح الباركود 👇
+        sed -i 's|</manifest>|    <uses-permission android:name="android.permission.CAMERA" />\n</manifest>|' android/app/src/main/AndroidManifest.xml
 
     - name: Generate App Icons
       run: |
