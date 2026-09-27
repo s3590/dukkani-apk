@@ -29,7 +29,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v5
       with:
-        node-version: '24'
+        node-version: '20'
 
     - name: Setup Java
       uses: actions/setup-java@v5
@@ -55,13 +55,17 @@ jobs:
         RUN_NUMBER: ${{ github.run_number }}
       run: |
         APP_NAME="${{ github.event.inputs.appName || 'دُكّاني أعمال' }}"
-        # تغيير اسم التطبيق
+        
+        # تغيير اسم التطبيق ورقم الإصدار
         sed -i "s/<string name=\"app_name\">.*<\/string>/<string name=\"app_name\">$APP_NAME<\/string>/g" android/app/src/main/res/values/strings.xml
-        # تغيير رقم الإصدار
         sed -i -E "s/versionCode[[:space:]]+[0-9]+/versionCode ${RUN_NUMBER}/g" android/app/build.gradle
         sed -i -E "s/versionName[[:space:]]+\"[^\"]+\"/versionName \"1.0.${RUN_NUMBER}\"/g" android/app/build.gradle
-        # 👇 السطر السحري لإعطاء التطبيق صلاحية الكاميرا لفتح الباركود 👇
-        sed -i 's|</manifest>|    <uses-permission android:name="android.permission.CAMERA" />\n</manifest>|' android/app/src/main/AndroidManifest.xml
+        
+        # 🚨 السطر السحري 1: حقن جميع صلاحيات الإشعارات والبصمة والكاميرا 🚨
+        sed -i 's|</manifest>|    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" />\n</manifest>|' android/app/src/main/AndroidManifest.xml
+        
+        # 🚨 السطر السحري 2: حقن إعدادات أيقونة الإشعارات 🚨
+        sed -i 's|</application>|    <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher" />\n    <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/colorPrimary" />\n</application>|' android/app/src/main/AndroidManifest.xml
 
     - name: Generate App Icons
       run: |
