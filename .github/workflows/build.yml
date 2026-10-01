@@ -45,19 +45,22 @@ jobs:
     - name: Create dummy www folder
       run: mkdir www && echo "<html><body>Loading...</body></html>" > www/index.html
 
+    # 🚀 التعديل السحري: تحديث الاسم من الجذور قبل بناء مجلد الأندرويد 🚀
+    - name: Update App Name dynamically
+      run: |
+        APP_NAME="${{ github.event.inputs.appName || 'دُكّاني أعمال' }}"
+        node -e "const fs = require('fs'); let cfg = JSON.parse(fs.readFileSync('capacitor.config.json')); cfg.appName = '$APP_NAME'; fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));"
+
     - name: Add Android Platform
       run: |
         npx cap add android
         npx cap sync android
 
-    - name: Change App Name, Version and Permissions
+    - name: Change Version and Permissions
       env:
         RUN_NUMBER: ${{ github.run_number }}
       run: |
-        APP_NAME="${{ github.event.inputs.appName || 'دُكّاني أعمال' }}"
-        
-        # تغيير اسم التطبيق ورقم الإصدار
-        sed -i "s/<string name=\"app_name\">.*<\/string>/<string name=\"app_name\">$APP_NAME<\/string>/g" android/app/src/main/res/values/strings.xml
+        # تغيير رقم الإصدار
         sed -i -E "s/versionCode[[:space:]]+[0-9]+/versionCode ${RUN_NUMBER}/g" android/app/build.gradle
         sed -i -E "s/versionName[[:space:]]+\"[^\"]+\"/versionName \"1.0.${RUN_NUMBER}\"/g" android/app/build.gradle
         
@@ -93,7 +96,7 @@ jobs:
       run: |
         sed -i '/dependencies {/a \        classpath "com.google.gms:google-services:4.3.15"' android/build.gradle
         echo "apply plugin: 'com.google.gms.google-services'" >> android/app/build.gradle
-        sed -i '/dependencies {/a \    implementation platform("com.google.firebase:firebase-bom:32.1.1" )\n    implementation "com.google.firebase:firebase-messaging"' android/app/build.gradle
+        sed -i '/dependencies {/a \    implementation platform("com.google.firebase:firebase-bom:32.1.1"  )\n    implementation "com.google.firebase:firebase-messaging"' android/app/build.gradle
 
     - name: Build unsigned release APK
       working-directory: android
@@ -161,7 +164,7 @@ jobs:
         🔗 **رابط التحميل المباشر (APK):**
         https://github.com/${REPOSITORY}/releases/download/v1.0.${RUN_NUMBER}/Dukkani-Release.apk
         
-        🔐 **بصمة التطبيق (انسخها للسيرفر ):**
+        🔐 **بصمة التطبيق (انسخها للسيرفر  ):**
         \`${SHA_FINGERPRINT}\`"
 
         curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
@@ -170,7 +173,7 @@ jobs:
           --data-urlencode "parse_mode=Markdown"
 
     - name: Cleanup Sensitive Files
-      if: ${{ always( ) }}
+      if: ${{ always(  ) }}
       run: |
         rm -f release.keystore
         rm -f app-aligned.apk
