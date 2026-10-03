@@ -58,27 +58,42 @@ jobs:
     - name: Inject Notification Channel in MainActivity
       run: |
         MAIN_ACTIVITY=$(find android/app/src/main/java -name "MainActivity.java")
-        sed -i 's/import com.getcapacitor.BridgeActivity;/import com.getcapacitor.BridgeActivity;\nimport android.app.NotificationChannel;\nimport android.app.NotificationManager;\nimport android.media.AudioAttributes;\nimport android.net.Uri;\nimport android.os.Build;\nimport android.os.Bundle;/' $MAIN_ACTIVITY
+        # استخراج اسم الحزمة برمجياً من الملف الأصلي
+        PACKAGE_NAME=$(grep -oP '^package \K[^;]+' $MAIN_ACTIVITY)
         
-        sed -i '/public class MainActivity extends BridgeActivity {/a \
-            @Override\n\
-            public void onCreate(Bundle savedInstanceState) {\n\
-                super.onCreate(savedInstanceState);\n\
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {\n\
-                    NotificationManager notificationManager = getSystemService(NotificationManager.class);\n\
-                    if (notificationManager != null) {\n\
-                        NotificationChannel channel = new NotificationChannel("dukkani_alerts", "إشعارات الطلبات", NotificationManager.IMPORTANCE_HIGH);\n\
-                        Uri soundUri = Uri.parse("android.resource://" + getPackageName() + "/raw/bell");\n\
-                        AudioAttributes audioAttributes = new AudioAttributes.Builder()\n\
-                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)\n\
-                                .setUsage(AudioAttributes.USAGE_NOTIFICATION)\n\
-                                .build();\n\
-                        channel.setSound(soundUri, audioAttributes);\n\
-                        channel.enableVibration(true);\n\
-                        notificationManager.createNotificationChannel(channel);\n\
-                    }\n\
-                }\n\
-            }' $MAIN_ACTIVITY
+        # إعادة كتابة الملف بالكامل لضمان سلامة الكود وعدم خروج الأقواس
+        cat <<EOF > $MAIN_ACTIVITY
+        package $PACKAGE_NAME;
+
+        import com.getcapacitor.BridgeActivity;
+        import android.app.NotificationChannel;
+        import android.app.NotificationManager;
+        import android.media.AudioAttributes;
+        import android.net.Uri;
+        import android.os.Build;
+        import android.os.Bundle;
+
+        public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+                super.onCreate(savedInstanceState);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    NotificationManager notificationManager = getSystemService(NotificationManager.class);
+                    if (notificationManager != null) {
+                        NotificationChannel channel = new NotificationChannel("dukkani_alerts", "إشعارات الطلبات", NotificationManager.IMPORTANCE_HIGH);
+                        Uri soundUri = Uri.parse("android.resource://" + getPackageName() + "/raw/bell");
+                        AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                                .build();
+                        channel.setSound(soundUri, audioAttributes);
+                        channel.enableVibration(true);
+                        notificationManager.createNotificationChannel(channel);
+                    }
+                }
+            }
+        }
+        EOF
 
     - name: Change Version and Permissions
       env:
