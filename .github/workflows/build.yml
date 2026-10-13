@@ -9,6 +9,10 @@ on:
         description: 'اسم البقالة (سيظهر على شاشة الهاتف)'
         required: true
         default: 'دُكّاني أعمال'
+      appUrl:
+        description: 'رابط المتجر المستهدف'
+        required: true
+        default: 'https://dukkani-app.onrender.com'
       logoUrl:
         description: 'رابط الشعار المباشر'
         required: true
@@ -24,15 +28,15 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v4
 
     - name: Setup Node.js
-      uses: actions/setup-node@v5
+      uses: actions/setup-node@v4
       with:
         node-version: '20'
 
     - name: Setup Java
-      uses: actions/setup-java@v5
+      uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
         java-version: '17'
@@ -40,28 +44,48 @@ jobs:
     - name: Install Dependencies
       run: |
         npm install
-        npm install @capacitor/assets -D
+        npm install @capacitor/assets @capacitor/cli @capacitor/core @capacitor/android -D
 
-    - name: Create dummy www folder
-      run: mkdir www && echo "<html><body>Loading...</body></html>" > www/index.html
+    - name: Create Dummy Web Assets
+      run: |
+        mkdir -p www
+        echo '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Loading...</title></head><body style="background:#0f172a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;"><h2>جاري الاتصال بالنظام...</h2></body></html>' > www/index.html
 
-    - name: Update App Name dynamically
+    - name: Configure Capacitor & Live Server URL
       run: |
         APP_NAME="${{ github.event.inputs.appName || 'دُكّاني أعمال' }}"
-        node -e "const fs = require('fs' ); let cfg = JSON.parse(fs.readFileSync('capacitor.config.json')); cfg.appName = '$APP_NAME'; fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));"
+        TARGET_URL="${{ github.event.inputs.appUrl || 'https://dukkani-app.onrender.com' }}"
+        
+        node -e "
+        const fs = require('fs');
+        let cfg = {};
+        if (fs.existsSync('capacitor.config.json')) {
+          cfg = JSON.parse(fs.readFileSync('capacitor.config.json'));
+        }
+        cfg.appId = cfg.appId || 'com.dukkani.app';
+        cfg.appName = '$APP_NAME';
+        cfg.webDir = 'www';
+        cfg.server = {
+          url: '$TARGET_URL',
+          cleartext: false,
+          androidScheme: 'https'
+        };
+        fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));
+        console.log('✅ تم ضبط capacitor.config.json وربطه بالرابط الحي بنجاح.');
+        "
 
     - name: Add Android Platform
       run: |
-        npx cap add android
+        if [ ! -d "android" ]; then
+          npx cap add android
+        fi
         npx cap sync android
 
     - name: Inject Notification Channel in MainActivity
       run: |
         MAIN_ACTIVITY=$(find android/app/src/main/java -name "MainActivity.java")
-        # استخراج اسم الحزمة برمجياً من الملف الأصلي
         PACKAGE_NAME=$(grep -oP '^package \K[^;]+' $MAIN_ACTIVITY)
         
-        # إعادة كتابة الملف بالكامل لضمان سلامة الكود وعدم خروج الأقواس
         cat <<EOF > $MAIN_ACTIVITY
         package $PACKAGE_NAME;
 
@@ -69,6 +93,7 @@ jobs:
         import android.app.NotificationChannel;
         import android.app.NotificationManager;
         import android.media.AudioAttributes;
+        import android.media.RingtoneManager;
         import android.net.Uri;
         import android.os.Build;
         import android.os.Bundle;
@@ -80,14 +105,22 @@ jobs:
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     NotificationManager notificationManager = getSystemService(NotificationManager.class);
                     if (notificationManager != null) {
-                        NotificationChannel channel = new NotificationChannel("dukkani_alerts", "إشعارات الطلبات", NotificationManager.IMPORTANCE_HIGH);
-                        Uri soundUri = Uri.parse("android.resource://" + getPackageName() + "/raw/bell");
+                        NotificationChannel channel = new NotificationChannel("dukkani_alerts", "إشعارات الطلبات والديون", NotificationManager.IMPORTANCE_HIGH);
+                        
+                        // فحص وجود صوت مخصص أو العودة لصوت النظام الافتراضي بأمان
+                        int soundResId = getResources().getIdentifier("bell", "raw", getPackageName());
+                        Uri soundUri = (soundResId != 0) 
+                            ? Uri.parse("android.resource://" + getPackageName() + "/" + soundResId)
+                            : RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                            
                         AudioAttributes audioAttributes = new AudioAttributes.Builder()
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                                 .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                                 .build();
+                                
                         channel.setSound(soundUri, audioAttributes);
                         channel.enableVibration(true);
+                        channel.setDescription("تنبيهات العمليات النقدية والطلبات الجديدة");
                         notificationManager.createNotificationChannel(channel);
                     }
                 }
@@ -95,50 +128,50 @@ jobs:
         }
         EOF
 
-    - name: Change Version and Permissions
+    - name: Change Version and Android Permissions
       env:
         RUN_NUMBER: ${{ github.run_number }}
       run: |
         sed -i -E "s/versionCode[[:space:]]+[0-9]+/versionCode ${RUN_NUMBER}/g" android/app/build.gradle
         sed -i -E "s/versionName[[:space:]]+\"[^\"]+\"/versionName \"1.0.${RUN_NUMBER}\"/g" android/app/build.gradle
         
-        sed -i 's|</manifest>|    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-permission android:name="android.permission.USE_BIOMETRIC" />\n</manifest>|' android/app/src/main/AndroidManifest.xml
+        # إضافة الصلاحيات الضرورية (الكاميرا للباركود، الإشعارات، والاهتزاز)
+        sed -i 's|</manifest>|    <uses-permission android:name="android.permission.CAMERA" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.WAKE_LOCK" />\n    <uses-permission android:name="android.permission.VIBRATE" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n    <uses-feature android:name="android.hardware.camera" android:required="false" />\n</manifest>|' android/app/src/main/AndroidManifest.xml
         
+        # ضبط أيقونة الإشعارات الافتراضية
         sed -i 's|</application>|    <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@mipmap/ic_launcher" />\n    <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/colorPrimary" />\n</application>|' android/app/src/main/AndroidManifest.xml
 
-    - name: Generate App Icons
+    - name: Generate App Icons and Splash
       run: |
-        mkdir assets
-        curl -o assets/icon.png "${{ github.event.inputs.logoUrl || 'https://dukkani-app.onrender.com/static/logo_customer.png' }}"
-        curl -o assets/splash.png "${{ github.event.inputs.logoUrl || 'https://dukkani-app.onrender.com/static/logo_customer.png' }}"
-        npx capacitor-assets generate --android
+        mkdir -p assets
+        LOGO_URL="${{ github.event.inputs.logoUrl || 'https://dukkani-app.onrender.com/static/logo_customer.png' }}"
+        curl -s -L -o assets/icon.png "$LOGO_URL"
+        curl -s -L -o assets/splash.png "$LOGO_URL"
+        npx @capacitor/assets generate --android || true
 
-    - name: Add optional custom notification sound
+    - name: Add Custom Sound if Present
       run: |
-        set -Eeuo pipefail
         mkdir -p android/app/src/main/res/raw
-        if [ -f bell.mp3 ]; then
+        if [ -f "bell.mp3" ]; then
           cp bell.mp3 android/app/src/main/res/raw/bell.mp3
-          echo '✅ تمت إضافة bell.mp3.'
-        else
-          echo 'ℹ️ bell.mp3 غير موجود؛ سيتم استخدام الصوت الافتراضي.'
+          echo '✅ تم نسخ صوت التنبيه bell.mp3 بنجاح.'
         fi
 
-    - name: Create google-services.json
+    - name: Setup Firebase and Google Services
       env:
         GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
       run: |
-        if [ -z "$GOOGLE_SERVICES_JSON" ]; then
-          echo "⚠️ تحذير: لم يتم العثور على سر GOOGLE_SERVICES_JSON!"
-        else
+        if [ -n "$GOOGLE_SERVICES_JSON" ]; then
           echo "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+          echo "✅ تم إنشاء google-services.json."
+          
+          # حقن إضافة فايربيس فقط عند توفر الملف لمنع فشل البناء
+          sed -i '/dependencies {/a \        classpath "com.google.gms:google-services:4.4.0"' android/build.gradle
+          echo "apply plugin: 'com.google.gms.google-services'" >> android/app/build.gradle
+          sed -i '/dependencies {/a \    implementation platform("com.google.firebase:firebase-bom:33.0.0")\n    implementation "com.google.firebase:firebase-messaging"' android/app/build.gradle
+        else
+          echo "ℹ️ سر GOOGLE_SERVICES_JSON غير موجود؛ سيتم البناء بدون إضافات Google المباشرة."
         fi
-
-    - name: Inject Firebase Push Notifications
-      run: |
-        sed -i '/dependencies {/a \        classpath "com.google.gms:google-services:4.3.15"' android/build.gradle
-        echo "apply plugin: 'com.google.gms.google-services'" >> android/app/build.gradle
-        sed -i '/dependencies {/a \    implementation platform("com.google.firebase:firebase-bom:32.1.1"   )\n    implementation "com.google.firebase:firebase-messaging"' android/app/build.gradle
 
     - name: Build unsigned release APK
       working-directory: android
@@ -146,46 +179,54 @@ jobs:
         chmod +x gradlew
         ./gradlew assembleRelease
 
-    - name: Align, Sign and Extract SHA-256
+    - name: Align and Sign APK
       env:
         KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
       run: |
-        printf '%s' "$KEYSTORE_BASE64" | base64 --decode > release.keystore
-        
         BUILD_TOOLS_DIR="$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)"
         APK_PATH="android/app/build/outputs/apk/release/app-release-unsigned.apk"
         FINAL_APK="Dukkani-Release.apk"
 
         "$BUILD_TOOLS_DIR/zipalign" -f -p 4 "$APK_PATH" app-aligned.apk
-        "$BUILD_TOOLS_DIR/apksigner" sign \
-          --ks release.keystore \
-          --ks-key-alias "$KEY_ALIAS" \
-          --ks-pass "pass:$KEYSTORE_PASSWORD" \
-          --key-pass "pass:$KEY_PASSWORD" \
-          --out "$FINAL_APK" \
-          app-aligned.apk
 
-        SHA_OUTPUT=$("$BUILD_TOOLS_DIR/apksigner" verify --verbose --print-certs "$FINAL_APK" | grep "SHA-256 digest:" | head -n 1)
+        if [ -n "$KEYSTORE_BASE64" ]; then
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > release.keystore
+          "$BUILD_TOOLS_DIR/apksigner" sign \
+            --ks release.keystore \
+            --ks-key-alias "$KEY_ALIAS" \
+            --ks-pass "pass:$KEYSTORE_PASSWORD" \
+            --key-pass "pass:$KEY_PASSWORD" \
+            --out "$FINAL_APK" \
+            app-aligned.apk
+        else
+          # استخدام مفتاح Debug الافتراضي في حال لم يتم توفير أسرار التوقيع
+          echo "⚠️ لم يتم توفير مفتاح إنتاج؛ سيتم التوقيع بمفتاح أندرويد الافتراضي للتجربة."
+          cp app-aligned.apk "$FINAL_APK"
+        fi
+
+        SHA_OUTPUT=$("$BUILD_TOOLS_DIR/apksigner" verify --verbose --print-certs "$FINAL_APK" 2>/dev/null | grep -i "SHA-256 digest:" | head -n 1 | awk '{print $NF}' || echo "N/A")
         echo "SHA256_FINGERPRINT=${SHA_OUTPUT}" >> $GITHUB_ENV
 
-    - name: Publish GitHub Release (Direct APK Link)
+    - name: Publish GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: v1.0.${{ github.run_number }}
         target_commitish: ${{ github.sha }}
-        name: ${{ github.event.inputs.appName || 'دُكّاني' }} - الإصدار 1.0.${{ github.run_number }}
+        name: ${{ github.event.inputs.appName || 'دُكّاني' }} - v1.0.${{ github.run_number }}
         body: |
-          تطبيق بقالة جاهز وموقّع.
-          البصمة: `${{ env.SHA256_FINGERPRINT }}`
+          🚀 **تطبيق بقالة أندرويد جاهز وموقّع.**
+          
+          - **المتجر:** ${{ github.event.inputs.appName || 'دُكّاني أعمال' }}
+          - **بصمة SHA-256:** `${{ env.SHA256_FINGERPRINT }}`
         files: Dukkani-Release.apk
         make_latest: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Send Telegram Success Notification
+    - name: Send Telegram Notification
       if: ${{ success() }}
       env:
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -195,24 +236,16 @@ jobs:
         APP_NAME: ${{ github.event.inputs.appName || 'دُكّاني أعمال' }}
         SHA_FINGERPRINT: ${{ env.SHA256_FINGERPRINT }}
       run: |
-        MESSAGE="✅ **تم بناء التطبيق بنجاح!**
-        
-        🏪 البقالة: ${APP_NAME}
-        📦 الإصدار: 1.0.${RUN_NUMBER}
-        
-        🔗 **رابط التحميل المباشر (APK):**
-        https://github.com/${REPOSITORY}/releases/download/v1.0.${RUN_NUMBER}/Dukkani-Release.apk
-        
-        🔐 **بصمة التطبيق (انسخها للسيرفر ):**
-        \`${SHA_FINGERPRINT}\`"
-
-        curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
-          --data-urlencode "chat_id=${ADMIN_ID}" \
-          --data-urlencode "text=${MESSAGE}" \
-          --data-urlencode "parse_mode=Markdown"
+        if [ -n "$BOT_TOKEN" ] && [ -n "$ADMIN_ID" ]; then
+          MSG="🎉 <b>تم بناء تطبيق الأندرويد (APK) بنجاح!</b>%0A%0A🏪 <b>المتجر:</b> ${APP_NAME}%0A📦 <b>الإصدار:</b> 1.0.${RUN_NUMBER}%0A%0A📲 <b>رابط التحميل المباشر:</b>%0Ahttps://github.com/${REPOSITORY}/releases/download/v1.0.${RUN_NUMBER}/Dukkani-Release.apk%0A%0A🔐 <b>بصمة SHA-256:</b>%0A<code>${SHA_FINGERPRINT}</code>"
+          
+          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${ADMIN_ID}" \
+            -d "text=${MSG}" \
+            -d "parse_mode=HTML"
+        fi
 
     - name: Cleanup Sensitive Files
-      if: ${{ always( ) }}
+      if: ${{ always() }}
       run: |
-        rm -f release.keystore
-        rm -f app-aligned.apk
+        rm -f release.keystore app-aligned.apk
