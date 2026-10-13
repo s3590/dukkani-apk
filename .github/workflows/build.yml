@@ -43,8 +43,7 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        npm install
-        npm install @capacitor/assets @capacitor/cli @capacitor/core @capacitor/android -D
+        npm install --legacy-peer-deps
 
     - name: Create Dummy Web Assets
       run: |
