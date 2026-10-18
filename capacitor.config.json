@@ -8,9 +8,9 @@
     "cleartext": false,
     "androidScheme": "https",
     "allowNavigation": [
-      "dukkani-app.onrender.com",
-      "*.render.com"
-    ]
+    "dukkani-app.onrender.com",
+    "*.onrender.com"
+]
   },
   "android": {
     "allowMixedContent": false,
