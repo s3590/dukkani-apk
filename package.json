@@ -1,23 +1,29 @@
 {
   "name": "dukkani-app",
   "version": "1.0.0",
+  "private": true,
   "description": "تطبيق دُكّاني - المنظومة الذكية لإدارة البقالة والكاشير والديون",
   "scripts": {
-    "build": "echo 'Static assets ready'",
-    "generate-icons": "capacitor-assets generate --android"
+    "build": "echo \"Static assets ready\"",
+    "generate-icons": "npx capacitor-assets generate --android",
+    "cap:sync": "npx cap sync android"
+  },
+  "engines": {
+    "node": ">=20 <23",
+    "npm": ">=10"
   },
   "dependencies": {
-    "@capacitor/core": "^5.7.0",
-    "@capacitor/android": "^5.7.0",
-    "@capacitor/app": "^5.0.7",
-    "@capacitor/keyboard": "^5.0.8",
-    "@capacitor/push-notifications": "^5.1.0",
-    "@capacitor/splash-screen": "^5.0.7",
-    "@capacitor/status-bar": "^5.0.7",
-    "@capgo/capacitor-native-biometric": "^5.0.0"
+    "@capacitor/core": "5.7.0",
+    "@capacitor/android": "5.7.0",
+    "@capacitor/app": "5.0.7",
+    "@capacitor/keyboard": "5.0.8",
+    "@capacitor/push-notifications": "5.1.0",
+    "@capacitor/splash-screen": "5.0.7",
+    "@capacitor/status-bar": "5.0.7",
+    "@capgo/capacitor-native-biometric": "5.0.0"
   },
   "devDependencies": {
-    "@capacitor/cli": "^5.7.0",
-    "@capacitor/assets": "^3.0.5"
+    "@capacitor/cli": "5.7.0",
+    "@capacitor/assets": "3.0.5"
   }
 }
