@@ -8,9 +8,8 @@
     "cleartext": false,
     "androidScheme": "https",
     "allowNavigation": [
-    "dukkani-app.onrender.com",
-    "*.onrender.com"
-]
+      "dukkani-app.onrender.com"
+    ]
   },
   "android": {
     "allowMixedContent": false,
@@ -19,10 +18,15 @@
   },
   "plugins": {
     "PushNotifications": {
-      "presentationOptions": ["badge", "sound", "alert"]
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
     },
     "SplashScreen": {
       "launchShowDuration": 1800,
+      "launchAutoHide": true,
       "backgroundColor": "#0f172a",
       "showSpinner": false,
       "androidSplashResourceName": "splash",
