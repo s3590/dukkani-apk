@@ -21,10 +21,15 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: apk-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build, sign and publish Android APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     env:
       APP_NAME: ${{ github.event.inputs.appName || 'دُكّاني أعمال' }}
@@ -70,7 +75,7 @@ jobs:
             npm install --legacy-peer-deps
           fi
 
-      - name: Create Web Assets
+      - name: Create Web Assets (fallback while server is loading)
         shell: bash
         run: |
           set -euo pipefail
@@ -81,13 +86,70 @@ jobs:
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1">
+            <meta name="theme-color" content="#0f172a">
             <title>جاري الاتصال بالنظام</title>
+            <style>
+              html, body { margin: 0; padding: 0; height: 100%; }
+              body {
+                background: #0f172a;
+                color: #ffffff;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                align-items: center;
+                font-family: -apple-system, BlinkMacSystemFont, "Cairo", sans-serif;
+                text-align: center;
+                padding: 24px;
+              }
+              .spinner {
+                width: 48px;
+                height: 48px;
+                border: 4px solid rgba(11, 163, 96, 0.25);
+                border-top-color: #0ba360;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin-bottom: 20px;
+              }
+              @keyframes spin { to { transform: rotate(360deg); } }
+              h2 { margin: 0 0 8px; font-weight: 900; font-size: 22px; }
+              p { margin: 0; font-size: 14px; color: #94a3b8; line-height: 1.6; }
+              button {
+                margin-top: 24px;
+                background: #0ba360;
+                color: #ffffff;
+                border: none;
+                padding: 14px 28px;
+                border-radius: 12px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+              }
+              button:active { transform: scale(0.95); }
+            </style>
           </head>
-          <body style="background:#0f172a;color:#fff;display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif">
+          <body>
+            <div class="spinner"></div>
             <h2>جاري الاتصال بالنظام...</h2>
+            <p>قد يستغرق التحميل بضع ثوانٍ في المرة الأولى.</p>
+            <button onclick="location.reload()">إعادة المحاولة</button>
           </body>
           </html>
           HTML
+
+      - name: Verify Capacitor packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! node -e "require.resolve('@capacitor/android/package.json')" 2>/dev/null; then
+            echo "❌ @capacitor/android غير مثبت."
+            echo "   أضفه في package.json: \"@capacitor/android\": \"^5.7.0\""
+            exit 1
+          fi
+          if ! node -e "require.resolve('@capacitor/core/package.json')" 2>/dev/null; then
+            echo "❌ @capacitor/core غير مثبت."
+            exit 1
+          fi
+          echo "✅ جميع حزم Capacitor موجودة."
 
       - name: Configure Capacitor and Live Server URL
         shell: bash
@@ -116,11 +178,12 @@ jobs:
             url: targetUrl,
             cleartext: false,
             androidScheme: 'https',
-            allowNavigation: [...new Set([...existingAllowNavigation, targetHost])]
+            allowNavigation: [...new Set([...existingAllowNavigation, targetHost])],
+            errorPath: 'index.html'
           };
 
           fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + '\n');
-          console.log('✅ تم ضبط capacitor.config.json.');
+          console.log('✅ تم ضبط capacitor.config.json (مع errorPath).');
           NODE
 
       - name: Add Android Platform and Sync
@@ -180,7 +243,12 @@ jobs:
                   NotificationChannel existing = manager.getNotificationChannel(CHANNEL_ID);
                   if (existing != null) return;
 
-                  Uri soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+                  // 🎵 إن وُجد res/raw/bell.mp3 استخدمه، وإلا صوت النظام الافتراضي
+                  int soundResId = getResources().getIdentifier("bell", "raw", getPackageName());
+                  Uri soundUri = (soundResId != 0)
+                          ? Uri.parse("android.resource://" + getPackageName() + "/" + soundResId)
+                          : RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+
                   AudioAttributes audioAttributes = new AudioAttributes.Builder()
                           .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                           .setUsage(AudioAttributes.USAGE_NOTIFICATION)
@@ -239,6 +307,7 @@ jobs:
               if line not in text:
                   text = text.replace('</manifest>', line + '\n</manifest>', 1)
           path.write_text(text)
+          print('✅ AndroidManifest.xml updated with required permissions.')
           PY
 
       - name: Generate App Icons and Splash
@@ -257,7 +326,7 @@ jobs:
           mkdir -p android/app/src/main/res/raw
           if [ -f bell.mp3 ]; then
             cp bell.mp3 android/app/src/main/res/raw/bell.mp3
-            echo '✅ تم نسخ bell.mp3.'
+            echo '✅ تم نسخ bell.mp3 — سيُستخدم صوتًا افتراضيًا للإشعارات.'
           else
             echo 'ℹ️ لم يتم العثور على bell.mp3؛ سيستخدم التطبيق صوت النظام الافتراضي.'
           fi
@@ -269,22 +338,77 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${GOOGLE_SERVICES_JSON:-}" ]; then
-            echo 'ℹ️ سر GOOGLE_SERVICES_JSON غير موجود؛ سيتم البناء بدون Firebase المباشر.'
-            exit 0
+            echo '❌ سر GOOGLE_SERVICES_JSON غير موجود.'
+            echo '   إشعارات FCM لن تعمل في التطبيق بدون هذا الملف.'
+            echo '   أضف السر في: Repository → Settings → Secrets and variables → Actions'
+            echo '   اسم السر: GOOGLE_SERVICES_JSON'
+            exit 1
           fi
+
           printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
 
-          if ! grep -q 'com.google.gms:google-services' android/build.gradle; then
-            sed -i '/dependencies[[:space:]]*{/a\        classpath "com.google.gms:google-services:4.4.0"' android/build.gradle
+          # حماية google-services.json من الرفع للـ git (في حال عدم وجود .gitignore)
+          if ! grep -q 'google-services.json' .gitignore 2>/dev/null; then
+            echo 'android/app/google-services.json' >> .gitignore
           fi
 
-          if ! grep -q 'com.google.gms.google-services' android/app/build.gradle; then
-            printf '\napply plugin: "com.google.gms.google-services"\n' >> android/app/build.gradle
-          fi
+          # Root build.gradle: إضافة classpath عبر Python (أكثر موثوقية من sed)
+          python3 - android/build.gradle <<'PY'
+          from pathlib import Path
+          import sys, re
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          if 'com.google.gms:google-services' not in text:
+              text = re.sub(
+                  r'(dependencies\s*{)',
+                  r'\1\n        classpath "com.google.gms:google-services:4.4.0"',
+                  text,
+                  count=1,
+              )
+              path.write_text(text)
+              print('✅ classpath added to root build.gradle')
+          else:
+              print('ℹ️ classpath already present in root build.gradle')
+          PY
 
-          if ! grep -q 'firebase-messaging' android/app/build.gradle; then
-            sed -i '/dependencies[[:space:]]*{/a\    implementation platform("com.google.firebase:firebase-bom:33.0.0")\n    implementation "com.google.firebase:firebase-messaging"' android/app/build.gradle
-          fi
+          # App build.gradle: apply plugin + firebase-messaging
+          python3 - android/app/build.gradle <<'PY'
+          from pathlib import Path
+          import sys, re
+          path = Path(sys.argv[1])
+          text = path.read_text()
+
+          if 'com.google.gms.google-services' not in text:
+              m = re.search(r"(apply plugin:\s*['\"]com\.android\.application['\"])", text)
+              if m:
+                  text = text.replace(
+                      m.group(1),
+                      m.group(1) + "\napply plugin: 'com.google.gms.google-services'",
+                      1,
+                  )
+                  print('✅ google-services added after com.android.application (legacy DSL)')
+              else:
+                  text = re.sub(
+                      r'(plugins\s*{\s*\n)',
+                      r'\1    id "com.google.gms.google-services"\n',
+                      text,
+                      count=1,
+                  )
+                  print('✅ google-services added via modern plugins DSL')
+          else:
+              print('ℹ️ google-services already applied')
+
+          if 'firebase-messaging' not in text:
+              text = re.sub(
+                  r'(dependencies\s*{)',
+                  r'\1\n    implementation platform("com.google.firebase:firebase-bom:33.0.0")\n    implementation "com.google.firebase:firebase-messaging"',
+                  text,
+                  count=1,
+              )
+              print('✅ firebase-messaging dependencies added')
+
+          path.write_text(text)
+          PY
           echo '✅ تم إعداد Firebase وGoogle Services.'
 
       - name: Build release APK
@@ -344,9 +468,24 @@ jobs:
             "$ALIGNED_APK"
 
           "$BUILD_TOOLS_DIR/apksigner" verify --verbose "$FINAL_APK"
+
           SHA_OUTPUT=$("$BUILD_TOOLS_DIR/apksigner" verify --verbose --print-certs "$FINAL_APK" 2>/dev/null | grep -i 'SHA-256 digest:' | head -n 1 | awk '{print $NF}' || true)
           echo "SHA256_FINGERPRINT=${SHA_OUTPUT:-N/A}" >> "$GITHUB_ENV"
           echo "✅ تم إنشاء APK موقع: $FINAL_APK"
+          echo "🔑 بصمة SHA-256: ${SHA_OUTPUT:-N/A}"
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "🚀 **تم بناء تطبيق Android بنجاح.**"
+            echo ""
+            echo "- **المتجر:** ${APP_NAME}"
+            echo "- **الإصدار:** 1.0.${GITHUB_RUN_NUMBER}"
+            echo "- **بصمة SHA-256:** \`${SHA256_FINGERPRINT:-N/A}\`"
+          } > "$RUNNER_TEMP/release_notes.md"
+          echo "✅ Notes written: $(wc -c < "$RUNNER_TEMP/release_notes.md") bytes"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -354,12 +493,7 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
           name: ${{ env.APP_NAME }} - v1.0.${{ github.run_number }}
-          body: |
-            🚀 **تم بناء تطبيق Android بنجاح.**
-
-            - **المتجر:** ${{ env.APP_NAME }}
-            - **الإصدار:** 1.0.${{ github.run_number }}
-            - **بصمة SHA-256:** `${{ env.SHA256_FINGERPRINT }}`
+          body_path: ${{ runner.temp }}/release_notes.md
           files: Dukkani-Release.apk
           make_latest: true
         env:
@@ -372,7 +506,6 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           RUN_NUMBER: ${{ github.run_number }}
           APP_NAME: ${{ env.APP_NAME }}
-          SHA_FINGERPRINT: ${{ env.SHA256_FINGERPRINT }}
         shell: bash
         run: |
           set -euo pipefail
@@ -381,6 +514,7 @@ jobs:
             exit 0
           fi
           DOWNLOAD_URL="https://github.com/${REPOSITORY}/releases/download/v1.0.${RUN_NUMBER}/Dukkani-Release.apk"
+          FINGERPRINT="${SHA256_FINGERPRINT:-N/A}"
           MSG=$(cat <<EOF
           <b>تم بناء تطبيق Android بنجاح!</b>
 
@@ -391,7 +525,7 @@ jobs:
           ${DOWNLOAD_URL}
 
           <b>بصمة SHA-256:</b>
-          <code>${SHA_FINGERPRINT}</code>
+          <code>${FINGERPRINT}</code>
           EOF
           )
 
