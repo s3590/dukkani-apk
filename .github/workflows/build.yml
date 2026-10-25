@@ -35,7 +35,7 @@ jobs:
       APP_NAME: ${{ github.event.inputs.appName || 'دُكّاني أعمال' }}
       TARGET_URL: ${{ github.event.inputs.appUrl || 'https://dukkani-app.onrender.com' }}
       LOGO_URL: ${{ github.event.inputs.logoUrl || 'https://dukkani-app.onrender.com/static/logo_customer.png' }}
-      NOTIFICATION_CHANNEL_ID: dukkani_alerts_vip
+      NOTIFICATION_CHANNEL_ID: dukkani_alerts_vip_v2
 
     steps:
       - name: Checkout code
