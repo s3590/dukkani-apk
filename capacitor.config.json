@@ -9,12 +9,14 @@
     "androidScheme": "https",
     "allowNavigation": [
       "dukkani-app.onrender.com"
-    ]
+    ],
+    "errorPath": "index.html"
   },
   "android": {
     "allowMixedContent": false,
     "captureInput": true,
-    "webContentsDebuggingEnabled": false
+    "webContentsDebuggingEnabled": false,
+    "minWebViewVersion": 60
   },
   "plugins": {
     "PushNotifications": {
@@ -34,7 +36,7 @@
       "splashImmersive": true
     },
     "StatusBar": {
-      "style": "DARK",
+      "style": "LIGHT",
       "backgroundColor": "#0ba360",
       "overlaysWebView": false
     },
