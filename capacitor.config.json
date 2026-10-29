@@ -7,24 +7,20 @@
     "url": "https://dukkani-app.onrender.com",
     "cleartext": false,
     "androidScheme": "https",
-    "allowNavigation": [
-      "dukkani-app.onrender.com"
-    ],
+    "allowNavigation": ["dukkani-app.onrender.com"],
     "errorPath": "index.html"
   },
   "android": {
     "allowMixedContent": false,
     "captureInput": true,
     "webContentsDebuggingEnabled": false,
-    "minWebViewVersion": 60
+    "minWebViewVersion": 90
   },
   "plugins": {
     "PushNotifications": {
-      "presentationOptions": [
-        "badge",
-        "sound",
-        "alert"
-      ]
+      "presentationOptions": ["badge", "sound", "alert"],
+      "iconColor": "#0ba360",
+      "sound": "bell.mp3"
     },
     "SplashScreen": {
       "launchShowDuration": 1800,
