@@ -195,7 +195,7 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure Notification Channel
+      - name: Configure Notification Channels (Multi-Channel)
         shell: bash
         run: |
           set -euo pipefail
@@ -226,22 +226,23 @@ jobs:
           import com.getcapacitor.BridgeActivity;
 
           public class MainActivity extends BridgeActivity {
-              private static final String CHANNEL_ID = "$NOTIFICATION_CHANNEL_ID";
+
+              // 🎯 ثلاث قنوات — تطابق ما يرسله الباك إند في notifications.py
+              private static final String CHANNEL_ORDERS   = "dukkani_orders";
+              private static final String CHANNEL_MESSAGES = "dukkani_messages";
+              private static final String CHANNEL_SYSTEM   = "dukkani_system";
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
-                  createNotificationChannel();
+                  createNotificationChannels();
               }
 
-              private void createNotificationChannel() {
+              private void createNotificationChannels() {
                   if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
 
                   NotificationManager manager = getSystemService(NotificationManager.class);
                   if (manager == null) return;
-
-                  NotificationChannel existing = manager.getNotificationChannel(CHANNEL_ID);
-                  if (existing != null) return;
 
                   // 🎵 إن وُجد res/raw/bell.mp3 استخدمه، وإلا صوت النظام الافتراضي
                   int soundResId = getResources().getIdentifier("bell", "raw", getPackageName());
@@ -254,12 +255,37 @@ jobs:
                           .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                           .build();
 
+                  createChannel(manager, CHANNEL_ORDERS,
+                      "طلبات جديدة 🔔",
+                      "إشعارات الطلبات الجديدة وتحديثاتها",
+                      soundUri, audioAttributes);
+
+                  createChannel(manager, CHANNEL_MESSAGES,
+                      "رسائل الزبائن 💬",
+                      "رسائل الزبائن والدعم الفني",
+                      soundUri, audioAttributes);
+
+                  createChannel(manager, CHANNEL_SYSTEM,
+                      "تنبيهات النظام ⚙️",
+                      "تحديثات إدارية وعروض",
+                      soundUri, audioAttributes);
+              }
+
+              private void createChannel(NotificationManager manager,
+                                          String id,
+                                          String name,
+                                          String description,
+                                          Uri soundUri,
+                                          AudioAttributes audioAttributes) {
+                  NotificationChannel existing = manager.getNotificationChannel(id);
+                  if (existing != null) return;
+
                   NotificationChannel channel = new NotificationChannel(
-                          CHANNEL_ID,
-                          "إشعارات دُكّاني",
+                          id,
+                          name,
                           NotificationManager.IMPORTANCE_HIGH
                   );
-                  channel.setDescription("تنبيهات الطلبات والرسائل والعمليات النقدية");
+                  channel.setDescription(description);
                   channel.enableVibration(true);
                   channel.setSound(soundUri, audioAttributes);
                   channel.setShowBadge(true);
@@ -267,7 +293,7 @@ jobs:
               }
           }
           JAVA
-
+          
       - name: Configure Android Version and Permissions
         shell: bash
         run: |
@@ -318,6 +344,21 @@ jobs:
           curl --fail --location --retry 3 --silent --show-error "$LOGO_URL" -o assets/icon.png
           cp assets/icon.png assets/splash.png
           npx @capacitor/assets generate --android
+
+      # ⬇️⬇️⬇️ هذا البلوك الجديد — ضعه هنا بالضبط ⬇️⬇️⬇️
+      - name: Add Notification Small Icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android/app/src/main/res/drawable
+          ICON=$(find android/app/src/main/res -name 'ic_launcher.png' -path '*mdpi*' | head -n 1)
+          if [ -n "$ICON" ]; then
+            cp "$ICON" android/app/src/main/res/drawable/ic_stat_icon.png
+            echo '✅ ic_stat_icon.png created'
+          else
+            echo '⚠️ ic_launcher.png not found — smallIcon will use default'
+          fi
+      # ⬆️⬆️⬆️ نهاية البلوك الجديد ⬆️⬆️⬆️
 
       - name: Add Custom Sound if Present
         shell: bash
