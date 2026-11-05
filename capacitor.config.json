@@ -18,7 +18,9 @@
   },
   "plugins": {
     "PushNotifications": {
-      "presentationOptions": ["badge", "sound", "alert"]
+      "presentationOptions": ["badge", "sound", "alert"],
+      "smallIcon": "ic_stat_icon",
+      "iconColor": "#0ba360"
     },
     "SplashScreen": {
       "launchShowDuration": 1200,
