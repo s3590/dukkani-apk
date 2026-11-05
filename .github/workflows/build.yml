@@ -8,7 +8,7 @@ on:
       appName:
         description: "اسم البقالة (سيظهر على شاشة الهاتف)"
         required: true
-        default: "دُكّاني أعمال"
+        default: "بقالتي"
       appUrl:
         description: "رابط المتجر المستهدف"
         required: true
@@ -29,7 +29,7 @@ jobs:
   build:
     name: Build, sign and publish Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     env:
       APP_NAME: ${{ github.event.inputs.appName || 'دُكّاني أعمال' }}
@@ -74,6 +74,15 @@ jobs:
           else
             npm install --legacy-peer-deps
           fi
+
+      - name: Install Capacitor Assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! node -e "require.resolve('@capacitor/assets/package.json')" 2>/dev/null; then
+            npm install --no-save @capacitor/assets
+          fi
+          echo "✅ @capacitor/assets ready"
 
       - name: Create Web Assets (fallback while server is loading)
         shell: bash
@@ -227,10 +236,10 @@ jobs:
 
           public class MainActivity extends BridgeActivity {
 
-              // 🎯 ثلاث قنوات — تطابق ما يرسله الباك إند في notifications.py
               private static final String CHANNEL_ORDERS   = "dukkani_orders";
               private static final String CHANNEL_MESSAGES = "dukkani_messages";
               private static final String CHANNEL_SYSTEM   = "dukkani_system";
+              private static final String CHANNEL_LEGACY   = "dukkani_alerts_vip";
 
               @Override
               public void onCreate(Bundle savedInstanceState) {
@@ -269,6 +278,12 @@ jobs:
                       "تنبيهات النظام ⚙️",
                       "تحديثات إدارية وعروض",
                       soundUri, audioAttributes);
+
+                  // 🆕 قناة قديمة للتوافق مع الرسائل السابقة
+                  createChannel(manager, CHANNEL_LEGACY,
+                      "إشعارات دُكّاني (قديم)",
+                      "للتوافق مع الرسائل القديمة",
+                      soundUri, audioAttributes);
               }
 
               private void createChannel(NotificationManager manager,
@@ -302,17 +317,30 @@ jobs:
           VERSION_CODE="${GITHUB_RUN_NUMBER}"
           VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
 
-          if grep -qE 'versionCode[[:space:]]+[0-9]+' "$BUILD_GRADLE"; then
-            sed -i -E "s/versionCode[[:space:]]+[0-9]+/versionCode ${VERSION_CODE}/" "$BUILD_GRADLE"
-          else
-            echo "⚠️ لم يتم تعديل versionCode تلقائيًا؛ راجع $BUILD_GRADLE"
-          fi
+          python3 - "$BUILD_GRADLE" "$VERSION_CODE" "$VERSION_NAME" <<'PY'
+          import re, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          version_code = sys.argv[2]
+          version_name = sys.argv[3]
 
-          if grep -qE 'versionName[[:space:]]+"[^"]+"' "$BUILD_GRADLE"; then
-            sed -i -E "s/versionName[[:space:]]+\"[^\"]+\"/versionName \"${VERSION_NAME}\"/" "$BUILD_GRADLE"
-          else
-            echo "⚠️ لم يتم تعديل versionName تلقائيًا؛ راجع $BUILD_GRADLE"
-          fi
+          new_text, n1 = re.subn(r'versionCode\s+\d+', f'versionCode {version_code}', text, count=1)
+          if n1 == 0:
+              print('⚠️ لم يتم العثور على versionCode — تحقق يدويًا.')
+          else:
+              text = new_text
+              print(f'✅ versionCode = {version_code}')
+
+          new_text, n2 = re.subn(r'versionName\s+"[^"]*"', f'versionName "{version_name}"', text, count=1)
+          if n2 == 0:
+              print('⚠️ لم يتم العثور على versionName — تحقق يدويًا.')
+          else:
+              text = new_text
+              print(f'✅ versionName = "{version_name}"')
+
+          path.write_text(text)
+          PY
 
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           python3 - "$MANIFEST" <<'PY'
@@ -343,20 +371,30 @@ jobs:
           mkdir -p assets
           curl --fail --location --retry 3 --silent --show-error "$LOGO_URL" -o assets/icon.png
           cp assets/icon.png assets/splash.png
-          npx @capacitor/assets generate --android
+          npx capacitor-assets generate --android
 
       # ⬇️⬇️⬇️ هذا البلوك الجديد — ضعه هنا بالضبط ⬇️⬇️⬇️
-      - name: Add Notification Small Icon
+      - name: Add Notification Small Icon (all densities)
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p android/app/src/main/res/drawable
-          ICON=$(find android/app/src/main/res -name 'ic_launcher.png' -path '*mdpi*' | head -n 1)
-          if [ -n "$ICON" ]; then
-            cp "$ICON" android/app/src/main/res/drawable/ic_stat_icon.png
-            echo '✅ ic_stat_icon.png created'
-          else
-            echo '⚠️ ic_launcher.png not found — smallIcon will use default'
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            ICON=$(find "android/app/src/main/res/mipmap-${density}" -name 'ic_launcher.png' 2>/dev/null | head -n 1)
+            if [ -n "$ICON" ]; then
+              mkdir -p "android/app/src/main/res/drawable-${density}"
+              cp "$ICON" "android/app/src/main/res/drawable-${density}/ic_stat_icon.png"
+              echo "✅ ic_stat_icon.png → drawable-${density}"
+            fi
+          done
+          if [ ! -f android/app/src/main/res/drawable/ic_stat_icon.png ]; then
+            FALLBACK=$(find android/app/src/main/res -name 'ic_launcher.png' | head -n 1)
+            if [ -n "$FALLBACK" ]; then
+              mkdir -p android/app/src/main/res/drawable
+              cp "$FALLBACK" android/app/src/main/res/drawable/ic_stat_icon.png
+              echo "✅ ic_stat_icon.png → drawable/ (fallback)"
+            else
+              echo '⚠️ ic_launcher.png not found — smallIcon will use default'
+            fi
           fi
       # ⬆️⬆️⬆️ نهاية البلوك الجديد ⬆️⬆️⬆️
 
@@ -386,7 +424,7 @@ jobs:
             exit 1
           fi
 
-          printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+          printf '%s' "${GOOGLE_SERVICES_JSON}" > android/app/google-services.json
 
           # حماية google-services.json من الرفع للـ git (في حال عدم وجود .gitignore)
           if ! grep -q 'google-services.json' .gitignore 2>/dev/null; then
@@ -482,7 +520,10 @@ jobs:
           "$BUILD_TOOLS_DIR/zipalign" -f -p 4 "$APK_PATH" "$ALIGNED_APK"
 
           if [ -n "${KEYSTORE_BASE64:-}" ] && [ -n "${KEY_ALIAS:-}" ] && [ -n "${KEYSTORE_PASSWORD:-}" ] && [ -n "${KEY_PASSWORD:-}" ]; then
-            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+            printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/release.keystore" || {
+              echo '❌ KEYSTORE_BASE64 غير صالح (base64 decode failed)'
+              exit 1
+            }
             KS="$RUNNER_TEMP/release.keystore"
             ALIAS="$KEY_ALIAS"
             KS_PASS="$KEYSTORE_PASSWORD"
