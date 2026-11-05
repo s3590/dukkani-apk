@@ -314,8 +314,8 @@ jobs:
               }
           }
           JAVA
-          
-                - name: Configure Android Version and Permissions
+
+      - name: Configure Android Version and Permissions
         shell: bash
         run: |
           set -euo pipefail
@@ -323,17 +323,9 @@ jobs:
           VERSION_CODE="${GITHUB_RUN_NUMBER}"
           VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
 
-          # 👇 إجبار اسم الحزمة على com.dukkani.app
+          # 👇 إجبار اسم الحزمة على com.dukkani.app (للتطابق مع Firebase)
           sed -i 's/applicationId .*/applicationId "com.dukkani.app"/g' "$BUILD_GRADLE"
           # 👆
-
-          python3 - "$BUILD_GRADLE" "$VERSION_CODE" "$VERSION_NAME" <<'PY'
-      
-      - name: Configure Android Version and Permissions
-        shell: bash
-        run: |
-          set -euo pipefail
-          BUILD_GRADLE="android/app/build.gradle"
           VERSION_CODE="${GITHUB_RUN_NUMBER}"
           VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
 
