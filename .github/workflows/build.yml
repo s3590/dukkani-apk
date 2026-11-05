@@ -158,7 +158,13 @@ jobs:
             echo "❌ @capacitor/core غير مثبت."
             exit 1
           fi
-          echo "✅ جميع حزم Capacitor موجودة."
+          # 🆕 التحقق من PushNotifications (إلزامي للإشعارات)
+          if ! node -e "require.resolve('@capacitor/push-notifications/package.json')" 2>/dev/null; then
+            echo "❌ @capacitor/push-notifications غير مثبت."
+            echo "   أضفه في package.json: \"@capacitor/push-notifications\": \"^5.1.0\""
+            exit 1
+          fi
+          echo "✅ جميع حزم Capacitor موجودة (بما فيها PushNotifications)."
 
       - name: Configure Capacitor and Live Server URL
         shell: bash
@@ -253,6 +259,7 @@ jobs:
                   NotificationManager manager = getSystemService(NotificationManager.class);
                   if (manager == null) return;
 
+                  // 🎵 إن وُجد res/raw/bell.mp3 استخدمه، وإلا صوت النظام الافتراضي
                   int soundResId = getResources().getIdentifier("bell", "raw", getPackageName());
                   Uri soundUri = (soundResId != 0)
                           ? Uri.parse("android.resource://" + getPackageName() + "/" + soundResId)
@@ -278,6 +285,7 @@ jobs:
                       "تحديثات إدارية وعروض",
                       soundUri, audioAttributes);
 
+                  // 🆕 قناة قديمة للتوافق مع الرسائل السابقة
                   createChannel(manager, CHANNEL_LEGACY,
                       "إشعارات دُكّاني (قديم)",
                       "للتوافق مع الرسائل القديمة",
@@ -306,8 +314,8 @@ jobs:
               }
           }
           JAVA
-
-      - name: Configure Android Version and Permissions
+          
+                - name: Configure Android Version and Permissions
         shell: bash
         run: |
           set -euo pipefail
@@ -315,9 +323,19 @@ jobs:
           VERSION_CODE="${GITHUB_RUN_NUMBER}"
           VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
 
-          # 👇 إجبار اسم الحزمة على com.dukkani.app ليتطابق مع Firebase
+          # 👇 إجبار اسم الحزمة على com.dukkani.app
           sed -i 's/applicationId .*/applicationId "com.dukkani.app"/g' "$BUILD_GRADLE"
           # 👆
+
+          python3 - "$BUILD_GRADLE" "$VERSION_CODE" "$VERSION_NAME" <<'PY'
+      
+      - name: Configure Android Version and Permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUILD_GRADLE="android/app/build.gradle"
+          VERSION_CODE="${GITHUB_RUN_NUMBER}"
+          VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
 
           python3 - "$BUILD_GRADLE" "$VERSION_CODE" "$VERSION_NAME" <<'PY'
           import re, sys
@@ -375,6 +393,7 @@ jobs:
           cp assets/icon.png assets/splash.png
           npx capacitor-assets generate --android
 
+      # ⬇️⬇️⬇️ هذا البلوك الجديد — ضعه هنا بالضبط ⬇️⬇️⬇️
       - name: Add Notification Small Icon (all densities)
         shell: bash
         run: |
@@ -397,6 +416,7 @@ jobs:
               echo '⚠️ ic_launcher.png not found — smallIcon will use default'
             fi
           fi
+      # ⬆️⬆️⬆️ نهاية البلوك الجديد ⬆️⬆️⬆️
 
       - name: Add Custom Sound if Present
         shell: bash
@@ -426,10 +446,12 @@ jobs:
 
           printf '%s' "${GOOGLE_SERVICES_JSON}" > android/app/google-services.json
 
+          # حماية google-services.json من الرفع للـ git (في حال عدم وجود .gitignore)
           if ! grep -q 'google-services.json' .gitignore 2>/dev/null; then
             echo 'android/app/google-services.json' >> .gitignore
           fi
 
+          # Root build.gradle: إضافة classpath عبر Python (أكثر موثوقية من sed)
           python3 - android/build.gradle <<'PY'
           from pathlib import Path
           import sys, re
@@ -448,6 +470,7 @@ jobs:
               print('ℹ️ classpath already present in root build.gradle')
           PY
 
+          # App build.gradle: apply plugin + firebase-messaging
           python3 - android/app/build.gradle <<'PY'
           from pathlib import Path
           import sys, re
