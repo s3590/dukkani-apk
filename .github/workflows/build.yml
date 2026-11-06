@@ -35,7 +35,7 @@ jobs:
       APP_NAME: ${{ github.event.inputs.appName || 'دُكّاني أعمال' }}
       TARGET_URL: ${{ github.event.inputs.appUrl || 'https://dukkani-app.onrender.com' }}
       LOGO_URL: ${{ github.event.inputs.logoUrl || 'https://dukkani-app.onrender.com/static/logo_customer.png' }}
-      NOTIFICATION_CHANNEL_ID: dukkani_alerts_vip_v2
+
 
     steps:
       - name: Checkout code
@@ -84,12 +84,12 @@ jobs:
           fi
           echo "✅ @capacitor/assets ready"
 
-      - name: Create Web Assets (fallback while server is loading)
+      - name: Create Web Assets (Smart Redirect + Retry)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p www
-          cat > www/index.html <<'HTML'
+          cat > www/index.html <<HTML
           <!doctype html>
           <html lang="ar" dir="rtl">
           <head>
@@ -100,19 +100,14 @@ jobs:
             <style>
               html, body { margin: 0; padding: 0; height: 100%; }
               body {
-                background: #0f172a;
-                color: #ffffff;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
-                align-items: center;
+                background: #0f172a; color: #ffffff;
+                display: flex; flex-direction: column;
+                justify-content: center; align-items: center;
                 font-family: -apple-system, BlinkMacSystemFont, "Cairo", sans-serif;
-                text-align: center;
-                padding: 24px;
+                text-align: center; padding: 24px;
               }
               .spinner {
-                width: 48px;
-                height: 48px;
+                width: 48px; height: 48px;
                 border: 4px solid rgba(11, 163, 96, 0.25);
                 border-top-color: #0ba360;
                 border-radius: 50%;
@@ -122,25 +117,40 @@ jobs:
               @keyframes spin { to { transform: rotate(360deg); } }
               h2 { margin: 0 0 8px; font-weight: 900; font-size: 22px; }
               p { margin: 0; font-size: 14px; color: #94a3b8; line-height: 1.6; }
+              #status { margin-top: 12px; font-size: 12px; color: #64748b; }
               button {
-                margin-top: 24px;
-                background: #0ba360;
-                color: #ffffff;
-                border: none;
-                padding: 14px 28px;
-                border-radius: 12px;
-                font-size: 16px;
-                font-weight: bold;
-                cursor: pointer;
+                margin-top: 24px; background: #0ba360; color: #fff;
+                border: none; padding: 14px 28px; border-radius: 12px;
+                font-size: 16px; font-weight: bold; cursor: pointer;
               }
-              button:active { transform: scale(0.95); }
             </style>
           </head>
           <body>
             <div class="spinner"></div>
             <h2>جاري الاتصال بالنظام...</h2>
             <p>قد يستغرق التحميل بضع ثوانٍ في المرة الأولى.</p>
+            <div id="status">جارٍ الاتصال بالخادم…</div>
             <button onclick="location.reload()">إعادة المحاولة</button>
+            <script>
+              const TARGET = "${TARGET_URL}";
+              let attempts = 0;
+              async function tryRedirect() {
+                attempts++;
+                document.getElementById('status').textContent = 'محاولة الاتصال #' + attempts + '…';
+                try {
+                  const controller = new AbortController();
+                  const t = setTimeout(() => controller.abort(), 8000);
+                  await fetch(TARGET + '/?_ping=' + Date.now(), {
+                    mode: 'no-cors', cache: 'no-store', signal: controller.signal
+                  });
+                  clearTimeout(t);
+                  window.location.replace(TARGET);
+                } catch (e) {
+                  setTimeout(tryRedirect, 3000);
+                }
+              }
+              tryRedirect();
+            </script>
           </body>
           </html>
           HTML
@@ -166,7 +176,7 @@ jobs:
           fi
           echo "✅ جميع حزم Capacitor موجودة (بما فيها PushNotifications)."
 
-      - name: Configure Capacitor and Live Server URL
+      - name: Configure Capacitor
         shell: bash
         run: |
           set -euo pipefail
@@ -185,22 +195,41 @@ jobs:
           cfg.appId = cfg.appId || 'com.dukkani.app';
           cfg.appName = appName;
           cfg.webDir = 'www';
+          cfg.backgroundColor = '#0f172a';
+
           const existingAllowNavigation = Array.isArray(cfg.server?.allowNavigation)
             ? cfg.server.allowNavigation
             : [];
           cfg.server = {
             ...(cfg.server || {}),
-            url: targetUrl,
             cleartext: false,
             androidScheme: 'https',
-            allowNavigation: [...new Set([...existingAllowNavigation, targetHost])],
-            errorPath: 'index.html'
+            allowNavigation: [...new Set([...existingAllowNavigation, targetHost])]
+          };
+          delete cfg.server.url;
+          delete cfg.server.errorPath;
+
+          cfg.plugins = cfg.plugins || {};
+          cfg.plugins.PushNotifications = {
+            presentationOptions: ['badge', 'sound', 'alert'],
+            smallIcon: 'ic_stat_icon',
+            iconColor: '#0ba360'
+          };
+          cfg.plugins.SplashScreen = {
+            launchShowDuration: 3000,
+            launchAutoHide: true,
+            backgroundColor: '#0f172a',
+            showSpinner: true,
+            androidSplashResourceName: 'splash',
+            splashFullScreen: true,
+            splashImmersive: true,
+            androidScaleType: 'CENTER_CROP'
           };
 
           fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + '\n');
-          console.log('✅ تم ضبط capacitor.config.json (مع errorPath).');
+          console.log('✅ capacitor.config.json configured (no server.url).');
           NODE
-
+          
       - name: Add Android Platform and Sync
         shell: bash
         run: |
@@ -210,26 +239,62 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure Notification Channels (Multi-Channel)
+      - name: Configure Android (MainActivity + Manifest + Version)
         shell: bash
         run: |
           set -euo pipefail
+
+          BUILD_GRADLE="android/app/build.gradle"
+          VERSION_CODE="${GITHUB_RUN_NUMBER}"
+          VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
+
+          sed -i 's/^\(\s*applicationId\s\).*/\1"com.dukkani.app"/' "$BUILD_GRADLE"
+
+          python3 - "$BUILD_GRADLE" "$VERSION_CODE" "$VERSION_NAME" <<'PY'
+          import re, sys
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          vc, vn = sys.argv[2], sys.argv[3]
+          text, n1 = re.subn(r'versionCode\s+\d+', f'versionCode {vc}', text, count=1)
+          text, n2 = re.subn(r'versionName\s+"[^"]*"', f'versionName "{vn}"', text, count=1)
+          path.write_text(text)
+          print(f'✅ versionCode={vc}, versionName="{vn}" (matches: {n1}/{n2})')
+          PY
+
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          python3 - "$MANIFEST" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          text = path.read_text()
+          perms = [
+              '<uses-permission android:name="android.permission.CAMERA" />',
+              '<uses-permission android:name="android.permission.INTERNET" />',
+              '<uses-permission android:name="android.permission.WAKE_LOCK" />',
+              '<uses-permission android:name="android.permission.VIBRATE" />',
+              '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+              '<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />',
+              '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
+              '<uses-feature android:name="android.hardware.camera" android:required="false" />',
+          ]
+          for p in perms:
+              if p not in text:
+                  text = text.replace('</manifest>', '    ' + p + '\n</manifest>', 1)
+          path.write_text(text)
+          print('✅ AndroidManifest.xml updated')
+          PY
+
           MAIN_ACTIVITY="$(find android/app/src/main -type f \( -name 'MainActivity.java' -o -name 'MainActivity.kt' \) | head -n 1)"
           if [ -z "$MAIN_ACTIVITY" ]; then
-            echo "❌ لم يتم العثور على MainActivity.java أو MainActivity.kt"
-            exit 1
+            echo "❌ MainActivity not found"; exit 1
           fi
+          PKG="$(sed -nE 's/^package[[:space:]]+([^;]+);?$/\1/p' "$MAIN_ACTIVITY" | head -n 1)"
+          DIR="$(dirname "$MAIN_ACTIVITY")"
+          rm -f "$DIR/MainActivity.java" "$DIR/MainActivity.kt"
 
-          PACKAGE_NAME="$(sed -nE 's/^package[[:space:]]+([^;]+);?$/\1/p' "$MAIN_ACTIVITY" | head -n 1)"
-          if [ -z "$PACKAGE_NAME" ]; then
-            echo "❌ تعذر استخراج package من $MAIN_ACTIVITY"
-            exit 1
-          fi
-
-          ACTIVITY_DIR="$(dirname "$MAIN_ACTIVITY")"
-          rm -f "$ACTIVITY_DIR/MainActivity.java" "$ACTIVITY_DIR/MainActivity.kt"
-          cat > "$ACTIVITY_DIR/MainActivity.java" <<JAVA
-          package $PACKAGE_NAME;
+          cat > "$DIR/MainActivity.java" <<JAVA
+          package $PKG;
 
           import android.app.NotificationChannel;
           import android.app.NotificationManager;
@@ -242,6 +307,7 @@ jobs:
 
           public class MainActivity extends BridgeActivity {
 
+              private static final String CHANNEL_VIP      = "dukkani_alerts_vip_v2";
               private static final String CHANNEL_ORDERS   = "dukkani_orders";
               private static final String CHANNEL_MESSAGES = "dukkani_messages";
               private static final String CHANNEL_SYSTEM   = "dukkani_system";
@@ -259,123 +325,63 @@ jobs:
                   NotificationManager manager = getSystemService(NotificationManager.class);
                   if (manager == null) return;
 
-                  // 🎵 إن وُجد res/raw/bell.mp3 استخدمه، وإلا صوت النظام الافتراضي
                   int soundResId = getResources().getIdentifier("bell", "raw", getPackageName());
                   Uri soundUri = (soundResId != 0)
                           ? Uri.parse("android.resource://" + getPackageName() + "/" + soundResId)
                           : RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
 
-                  AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                  AudioAttributes attrs = new AudioAttributes.Builder()
                           .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
                           .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                           .build();
 
+                  createChannel(manager, CHANNEL_VIP,
+                      "تنبيهات دُكّاني VIP",
+                      "الإشعارات الأساسية للنظام",
+                      soundUri, attrs);
+
                   createChannel(manager, CHANNEL_ORDERS,
                       "طلبات جديدة 🔔",
                       "إشعارات الطلبات الجديدة وتحديثاتها",
-                      soundUri, audioAttributes);
+                      soundUri, attrs);
 
                   createChannel(manager, CHANNEL_MESSAGES,
                       "رسائل الزبائن 💬",
                       "رسائل الزبائن والدعم الفني",
-                      soundUri, audioAttributes);
+                      soundUri, attrs);
 
                   createChannel(manager, CHANNEL_SYSTEM,
                       "تنبيهات النظام ⚙️",
                       "تحديثات إدارية وعروض",
-                      soundUri, audioAttributes);
+                      soundUri, attrs);
 
-                  // 🆕 قناة قديمة للتوافق مع الرسائل السابقة
                   createChannel(manager, CHANNEL_LEGACY,
                       "إشعارات دُكّاني (قديم)",
                       "للتوافق مع الرسائل القديمة",
-                      soundUri, audioAttributes);
+                      soundUri, attrs);
               }
 
               private void createChannel(NotificationManager manager,
-                                          String id,
-                                          String name,
-                                          String description,
-                                          Uri soundUri,
-                                          AudioAttributes audioAttributes) {
+                                          String id, String name, String desc,
+                                          Uri sound, AudioAttributes attrs) {
                   NotificationChannel existing = manager.getNotificationChannel(id);
                   if (existing != null) return;
 
-                  NotificationChannel channel = new NotificationChannel(
-                          id,
-                          name,
-                          NotificationManager.IMPORTANCE_HIGH
-                  );
-                  channel.setDescription(description);
-                  channel.enableVibration(true);
-                  channel.setSound(soundUri, audioAttributes);
-                  channel.setShowBadge(true);
-                  manager.createNotificationChannel(channel);
+                  NotificationChannel ch = new NotificationChannel(
+                      id, name, NotificationManager.IMPORTANCE_HIGH);
+                  ch.setDescription(desc);
+                  ch.enableVibration(true);
+                  ch.enableLights(true);
+                  ch.setSound(sound, attrs);
+                  ch.setShowBadge(true);
+                  ch.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+                  manager.createNotificationChannel(ch);
               }
           }
           JAVA
+          echo "✅ MainActivity.java written with all channels"
 
-      - name: Configure Android Version and Permissions
-        shell: bash
-        run: |
-          set -euo pipefail
-          BUILD_GRADLE="android/app/build.gradle"
-          VERSION_CODE="${GITHUB_RUN_NUMBER}"
-          VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
-
-          # 👇 إجبار اسم الحزمة على com.dukkani.app (للتطابق مع Firebase)
-          sed -i 's/applicationId .*/applicationId "com.dukkani.app"/g' "$BUILD_GRADLE"
-          # 👆
-          VERSION_CODE="${GITHUB_RUN_NUMBER}"
-          VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
-
-          python3 - "$BUILD_GRADLE" "$VERSION_CODE" "$VERSION_NAME" <<'PY'
-          import re, sys
-          from pathlib import Path
-          path = Path(sys.argv[1])
-          text = path.read_text()
-          version_code = sys.argv[2]
-          version_name = sys.argv[3]
-
-          new_text, n1 = re.subn(r'versionCode\s+\d+', f'versionCode {version_code}', text, count=1)
-          if n1 == 0:
-              print('⚠️ لم يتم العثور على versionCode — تحقق يدويًا.')
-          else:
-              text = new_text
-              print(f'✅ versionCode = {version_code}')
-
-          new_text, n2 = re.subn(r'versionName\s+"[^"]*"', f'versionName "{version_name}"', text, count=1)
-          if n2 == 0:
-              print('⚠️ لم يتم العثور على versionName — تحقق يدويًا.')
-          else:
-              text = new_text
-              print(f'✅ versionName = "{version_name}"')
-
-          path.write_text(text)
-          PY
-
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          python3 - "$MANIFEST" <<'PY'
-          from pathlib import Path
-          import sys
-
-          path = Path(sys.argv[1])
-          text = path.read_text()
-          permissions = [
-              '    <uses-permission android:name="android.permission.CAMERA" />',
-              '    <uses-permission android:name="android.permission.INTERNET" />',
-              '    <uses-permission android:name="android.permission.WAKE_LOCK" />',
-              '    <uses-permission android:name="android.permission.VIBRATE" />',
-              '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
-              '    <uses-feature android:name="android.hardware.camera" android:required="false" />',
-          ]
-          for line in permissions:
-              if line not in text:
-                  text = text.replace('</manifest>', line + '\n</manifest>', 1)
-          path.write_text(text)
-          print('✅ AndroidManifest.xml updated with required permissions.')
-          PY
-
+ 
       - name: Generate App Icons and Splash
         shell: bash
         run: |
@@ -386,7 +392,7 @@ jobs:
           npx capacitor-assets generate --android
 
       # ⬇️⬇️⬇️ هذا البلوك الجديد — ضعه هنا بالضبط ⬇️⬇️⬇️
-      - name: Add Notification Small Icon (all densities)
+      - name: Add Notification Small Icon (all densities + vector fallback)
         shell: bash
         run: |
           set -euo pipefail
@@ -398,16 +404,16 @@ jobs:
               echo "✅ ic_stat_icon.png → drawable-${density}"
             fi
           done
-          if [ ! -f android/app/src/main/res/drawable/ic_stat_icon.png ]; then
-            FALLBACK=$(find android/app/src/main/res -name 'ic_launcher.png' | head -n 1)
-            if [ -n "$FALLBACK" ]; then
-              mkdir -p android/app/src/main/res/drawable
-              cp "$FALLBACK" android/app/src/main/res/drawable/ic_stat_icon.png
-              echo "✅ ic_stat_icon.png → drawable/ (fallback)"
-            else
-              echo '⚠️ ic_launcher.png not found — smallIcon will use default'
-            fi
-          fi
+          mkdir -p android/app/src/main/res/drawable
+          cat > android/app/src/main/res/drawable/ic_stat_icon.xml <<'XML'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp" android:height="24dp"
+              android:viewportWidth="24" android:viewportHeight="24">
+              <path android:fillColor="#FFFFFF"
+                  android:pathData="M12,22c1.1,0 2,-0.9 2,-2h-4c0,1.1 0.9,2 2,2zM18,16v-5c0,-3.07 -1.63,-5.64 -4.5,-6.32V4c0,-0.83 -0.67,-1.5 -1.5,-1.5s-1.5,0.67 -1.5,1.5v0.68C7.64,5.36 6,7.92 6,11v5l-2,2v1h16v-1l-2,-2z"/>
+          </vector>
+          XML
+          echo "✅ vector ic_stat_icon.xml created (crash-proof fallback)"
       # ⬆️⬆️⬆️ نهاية البلوك الجديد ⬆️⬆️⬆️
 
       - name: Add Custom Sound if Present
