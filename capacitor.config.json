@@ -4,17 +4,15 @@
   "webDir": "www",
   "backgroundColor": "#0f172a",
   "server": {
-    "url": "https://dukkani-app.onrender.com",
     "cleartext": false,
     "androidScheme": "https",
-    "allowNavigation": ["dukkani-app.onrender.com"],
-    "errorPath": "index.html"
+    "allowNavigation": ["dukkani-app.onrender.com"]
   },
   "android": {
     "allowMixedContent": false,
     "captureInput": false,
     "webContentsDebuggingEnabled": false,
-    "minWebViewVersion": 90
+    "minWebViewVersion": 83
   },
   "plugins": {
     "PushNotifications": {
@@ -23,13 +21,14 @@
       "iconColor": "#0ba360"
     },
     "SplashScreen": {
-      "launchShowDuration": 1200,
+      "launchShowDuration": 3000,
       "launchAutoHide": true,
       "backgroundColor": "#0f172a",
       "showSpinner": true,
       "androidSplashResourceName": "splash",
       "splashFullScreen": true,
-      "splashImmersive": true
+      "splashImmersive": true,
+      "androidScaleType": "CENTER_CROP"
     },
     "StatusBar": {
       "style": "DARK",
@@ -37,9 +36,8 @@
       "overlaysWebView": false
     },
     "Keyboard": {
-      "resize": "native",
-      "style": "DARK",
-      "resizeOnFullScreen": true
+      "resize": "body",
+      "style": "DARK"
     }
   }
 }
