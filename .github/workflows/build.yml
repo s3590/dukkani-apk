@@ -198,7 +198,7 @@ jobs:
             iconColor: '#0ba360'
           };
           cfg.plugins.SplashScreen = {
-            launchShowDuration: 500,
+            launchShowDuration: 3000,
             launchAutoHide: true,
             backgroundColor: '#0f172a',
             showSpinner: false,
