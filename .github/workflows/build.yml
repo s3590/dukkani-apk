@@ -182,15 +182,25 @@ jobs:
           const existingAllowNavigation = Array.isArray(cfg.server?.allowNavigation)
             ? cfg.server.allowNavigation
             : [];
+
+          // ✅ الحل الجوهري: نُعيّن server.url لفتح الموقع مباشرة داخل WebView
+          // هذا يمنع الاعتماد على www/index.html + window.location.replace
           cfg.server = {
             ...(cfg.server || {}),
+            url: targetUrl,                              // ← 🔑 المفتاح
             cleartext: false,
             androidScheme: 'https',
-            allowNavigation: [...new Set([...existingAllowNavigation, targetHost])]
+            allowNavigation: [...new Set([
+              ...existingAllowNavigation,
+              targetHost,
+              'accounts.google.com',
+              '*.google.com',
+              '*.googleapis.com',
+              '*.gstatic.com',
+            ])]
           };
-          delete cfg.server.url;
-          delete cfg.server.errorPath;
 
+          // إعدادات الإشعارات (لا تغيير)
           cfg.plugins = cfg.plugins || {};
           cfg.plugins.PushNotifications = {
             presentationOptions: ['badge', 'sound', 'alert'],
@@ -198,7 +208,7 @@ jobs:
             iconColor: '#0ba360'
           };
           cfg.plugins.SplashScreen = {
-            launchShowDuration: 3000,
+            launchShowDuration: 500,
             launchAutoHide: true,
             backgroundColor: '#0f172a',
             showSpinner: false,
@@ -209,7 +219,7 @@ jobs:
           };
 
           fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2) + '\n');
-          console.log('✅ capacitor.config.json configured (no server.url).');
+          console.log('✅ capacitor.config.json configured with server.url =', targetUrl);
           NODE
           
       - name: Add Android Platform and Sync
@@ -594,6 +604,7 @@ jobs:
             echo "- **المتجر:** ${APP_NAME}"
             echo "- **الإصدار:** 1.0.${GITHUB_RUN_NUMBER}"
             echo "- **بصمة SHA-256:** \`${SHA256_FINGERPRINT:-N/A}\`"
+            echo "- **بصمة SHA-1:** \`${SHA1_FINGERPRINT:-N/A}\`"
           } > "$RUNNER_TEMP/release_notes.md"
           echo "✅ Notes written: $(wc -c < "$RUNNER_TEMP/release_notes.md") bytes"
 
