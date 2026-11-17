@@ -1,10 +1,18 @@
 name: Build VIP Store APK (Release)
 
 on:
-  push:
-    branches: [main]
+  # ✅ البناء يدوي فقط (لأن كل APK يحتاج store_id محدد)
   workflow_dispatch:
     inputs:
+      storeId:
+        description: "معرف البقالة (رقم من قاعدة البيانات — إلزامي للـ APK الصحيح)"
+        required: true
+        type: string
+      storeSlug:
+        description: "معرف البقالة اللفظي (اختياري — مثال: al-amana)"
+        required: false
+        default: ""
+        type: string
       appName:
         description: "اسم البقالة (سيظهر على شاشة الهاتف)"
         required: true
@@ -17,7 +25,7 @@ on:
         description: "رابط الشعار المباشر"
         required: true
         default: "https://dukkani-app.onrender.com/static/logo_customer.png"
-
+        
 permissions:
   contents: write
 
@@ -32,6 +40,8 @@ jobs:
     timeout-minutes: 45
 
     env:
+      STORE_ID: ${{ github.event.inputs.storeId || '0' }}
+      STORE_SLUG: ${{ github.event.inputs.storeSlug || '' }}
       APP_NAME: ${{ github.event.inputs.appName || 'دُكّاني أعمال' }}
       TARGET_URL: ${{ github.event.inputs.appUrl || 'https://dukkani-app.onrender.com' }}
       LOGO_URL: ${{ github.event.inputs.logoUrl || 'https://dukkani-app.onrender.com/static/logo_customer.png' }}
@@ -65,6 +75,22 @@ jobs:
             *) echo "❌ يجب أن يبدأ logoUrl بـ https://"; exit 1 ;;
           esac
 
+      - name: Validate Store ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${STORE_ID}" = "0" ] || [ -z "${STORE_ID}" ]; then
+            echo "❌ يجب إدخال storeId صحيح (رقم موجب) لبناء APK لبقالة محددة."
+            echo "   القيمة الحالية: '${STORE_ID}'"
+            exit 1
+          fi
+          if ! [[ "${STORE_ID}" =~ ^[0-9]+$ ]]; then
+            echo "❌ storeId يجب أن يكون رقماً صحيحاً موجباً."
+            echo "   القيمة الحالية: '${STORE_ID}'"
+            exit 1
+          fi
+          echo "✅ Store ID valid: ${STORE_ID}"
+          
       - name: Install Dependencies
         shell: bash
         run: |
@@ -84,11 +110,36 @@ jobs:
           fi
           echo "✅ @capacitor/assets ready"
 
-      - name: Create Web Assets (Instant Redirect)
+      - name: Create Web Assets (Instant Redirect + Store Config)
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p www
+          mkdir -p www/static/js
+          
+          # ✅ 1. حقن store_id في store-config.js (يُقرأ تلقائياً من index.html)
+          cat > www/static/js/store-config.js <<JS
+          // ⚠️ تم حقنه تلقائياً بواسطة GitHub Actions
+          window.STORE_CONFIG = {
+              store_id: ${STORE_ID},
+              store_name: "${APP_NAME}",
+              store_slug: "${STORE_SLUG}",
+              build_time: "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+              is_apk: true,
+          };
+          JS
+          echo "✅ store-config.js created with store_id=${STORE_ID}"
+          
+          # ✅ 2. بناء index.html مع تمرير store_id في TARGET_URL
+          TARGET_URL_WITH_STORE="${TARGET_URL}"
+          if [ "${STORE_ID}" != "0" ] && [ -n "${STORE_ID}" ]; then
+              case "${TARGET_URL}" in
+                  *\?*) TARGET_URL_WITH_STORE="${TARGET_URL}&store_id=${STORE_ID}" ;;
+                  *)    TARGET_URL_WITH_STORE="${TARGET_URL}/?store_id=${STORE_ID}" ;;
+              esac
+          fi
+          echo "🔗 Final URL: ${TARGET_URL_WITH_STORE}"
+          
           cat > www/index.html <<HTML
           <!doctype html>
           <html lang="ar" dir="rtl">
@@ -96,7 +147,7 @@ jobs:
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width,initial-scale=1">
             <meta name="theme-color" content="#0f172a">
-            <title>بقالتي</title>
+            <title>${APP_NAME}</title>
             <style>
               html, body { margin: 0; padding: 0; height: 100%; }
               body {
@@ -126,16 +177,18 @@ jobs:
           </head>
           <body>
             <div class="spinner"></div>
-            <h2>بقالتي</h2>
+            <h2>${APP_NAME}</h2>
             <p>جاري تحميل التطبيق...</p>
             <button onclick="location.reload()">إعادة المحاولة</button>
+            <script src="/static/js/store-config.js" onerror="console.warn('store-config not found')"></script>
             <script>
-              // 🆕 انتقال فوري (بدون ping)
-              window.location.replace("${TARGET_URL}");
+              window.location.replace("${TARGET_URL_WITH_STORE}");
             </script>
           </body>
           </html>
           HTML
+          
+          echo "✅ www/index.html created → ${TARGET_URL_WITH_STORE}"
           
       - name: Verify Capacitor packages
         shell: bash
@@ -183,13 +236,22 @@ jobs:
             ? cfg.server.allowNavigation
             : [];
 
-          // ✅ الحل الجوهري: نُعيّن server.url لفتح الموقع مباشرة داخل WebView
-          // هذا يمنع الاعتماد على www/index.html + window.location.replace
-          cfg.server = {
+          // ✅ إضافة store_id إلى server.url — يكشفه index.html تلقائياً
+          const storeId = process.env.STORE_ID || '0';
+          let urlWithStore = targetUrl;
+          if (storeId && storeId !== '0') {
+              urlWithStore = targetUrl.includes('?') 
+                  ? `${targetUrl}&store_id=${storeId}`
+                  : `${targetUrl}/?store_id=${storeId}`;
+          }
+          console.log('🔗 server.url =', urlWithStore);
+
+          cfg.server = {                  
             ...(cfg.server || {}),
-            url: targetUrl,                              // ← 🔑 المفتاح
+            url: urlWithStore,
             cleartext: false,
-            androidScheme: 'https',
+            // ⚠️ لا نضع androidScheme عندما نستخدم server.url كامل
+            // — Capacitor يكتشفه تلقائياً من URL
             allowNavigation: [...new Set([
               ...existingAllowNavigation,
               targetHost,
@@ -199,7 +261,7 @@ jobs:
               '*.gstatic.com',
             ])]
           };
-
+          
           // إعدادات الإشعارات (لا تغيير)
           cfg.plugins = cfg.plugins || {};
           cfg.plugins.PushNotifications = {
@@ -231,7 +293,7 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Configure Android (MainActivity + Manifest + Version)
+      - name: Configure Android (MainActivity + Manifest + Version + App ID)
         shell: bash
         run: |
           set -euo pipefail
@@ -240,7 +302,41 @@ jobs:
           VERSION_CODE="${GITHUB_RUN_NUMBER}"
           VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
 
-          sed -i 's/^\(\s*applicationId\s\).*/\1"com.dukkani.app"/' "$BUILD_GRADLE"
+          # ✅ applicationId فريد لكل بقالة (للسماح بتثبيت أكثر من بقالة على نفس الهاتف)
+          if [ "${STORE_ID}" != "0" ] && [ -n "${STORE_ID}" ]; then
+              APP_ID="com.dukkani.store${STORE_ID}"
+          else
+              APP_ID="com.dukkani.app"
+          fi
+          echo "📦 App ID: ${APP_ID}"
+          sed -i "s/^\(\s*applicationId\s\).*/\1\"${APP_ID}\"/" "$BUILD_GRADLE"
+          
+          # ✅ تعديل اسم التطبيق في strings.xml
+          STRINGS_XML="android/app/src/main/res/values/strings.xml"
+          if [ -f "$STRINGS_XML" ]; then
+              python3 - "$STRINGS_XML" "$APP_NAME" <<'PY'
+          import sys, re
+          from pathlib import Path
+          path = Path(sys.argv[1])
+          app_name = sys.argv[2]
+          text = path.read_text(encoding='utf-8')
+          
+          # استبدال <string name="app_name">...</string>
+          text = re.sub(
+              r'<string name="app_name">[^<]*</string>',
+              f'<string name="app_name">{app_name}</string>',
+              text
+          )
+          # استبدال <string name="title_activity_main">...</string>
+          text = re.sub(
+              r'<string name="title_activity_main">[^<]*</string>',
+              f'<string name="title_activity_main">{app_name}</string>',
+              text
+          )
+          path.write_text(text, encoding='utf-8')
+          print(f'✅ App name set to: {app_name}')
+          PY
+          fi
 
           python3 - "$BUILD_GRADLE" "$VERSION_CODE" "$VERSION_NAME" <<'PY'
           import re, sys
@@ -373,7 +469,17 @@ jobs:
           JAVA
           echo "✅ MainActivity.java written with all channels"
 
- 
+      - name: Verify App Name Applied
+        shell: bash
+        run: |
+          set -euo pipefail
+          STRINGS_XML="android/app/src/main/res/values/strings.xml"
+          echo "🔍 App name في strings.xml:"
+          grep 'name="app_name"' "$STRINGS_XML" || echo "❌ app_name غير موجود!"
+          echo ""
+          echo "🔍 ApplicationId في build.gradle:"
+          grep 'applicationId' android/app/build.gradle || echo "❌ applicationId غير موجود!"
+          
       - name: Generate App Icons and Splash
         shell: bash
         run: |
@@ -608,14 +714,27 @@ jobs:
           } > "$RUNNER_TEMP/release_notes.md"
           echo "✅ Notes written: $(wc -c < "$RUNNER_TEMP/release_notes.md") bytes"
 
+      - name: Rename APK for Store
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${STORE_ID}" != "0" ] && [ -n "${STORE_ID}" ]; then
+              NEW_NAME="Dukkani-Store${STORE_ID}-v1.0.${GITHUB_RUN_NUMBER}.apk"
+          else
+              NEW_NAME="Dukkani-Release-v1.0.${GITHUB_RUN_NUMBER}.apk"
+          fi
+          mv Dukkani-Release.apk "$NEW_NAME"
+          echo "APK_NAME=$NEW_NAME" >> "$GITHUB_ENV"
+          echo "✅ Renamed to: $NEW_NAME"
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
+          tag_name: v1.0.${{ github.run_number }}-store${{ github.event.inputs.storeId || '0' }}
           target_commitish: ${{ github.sha }}
           name: ${{ env.APP_NAME }} - v1.0.${{ github.run_number }}
           body_path: ${{ runner.temp }}/release_notes.md
-          files: Dukkani-Release.apk
+          files: ${{ env.APK_NAME }}
           make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -627,6 +746,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           RUN_NUMBER: ${{ github.run_number }}
           APP_NAME: ${{ env.APP_NAME }}
+          STORE_ID: ${{ github.event.inputs.storeId || '0' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -634,7 +754,12 @@ jobs:
             echo 'ℹ️ لم يتم توفير BOT_TOKEN أو ADMIN_ID؛ تم تخطي إشعار Telegram.'
             exit 0
           fi
-          DOWNLOAD_URL="https://github.com/${REPOSITORY}/releases/download/v1.0.${RUN_NUMBER}/Dukkani-Release.apk"
+          if [ "${STORE_ID}" != "0" ] && [ -n "${STORE_ID}" ]; then
+              APK_FILE="Dukkani-Store${STORE_ID}-v1.0.${RUN_NUMBER}.apk"
+          else
+              APK_FILE="Dukkani-Release-v1.0.${RUN_NUMBER}.apk"
+          fi
+          DOWNLOAD_URL="https://github.com/${REPOSITORY}/releases/download/v1.0.${RUN_NUMBER}-store${STORE_ID:-0}/${APK_FILE}"
           FINGERPRINT="${SHA256_FINGERPRINT:-N/A}"
           MSG=$(cat <<EOF
           <b>تم بناء تطبيق Android بنجاح!</b>
