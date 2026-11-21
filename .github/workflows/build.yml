@@ -535,20 +535,44 @@ jobs:
           set -euo pipefail
           if [ -z "${GOOGLE_SERVICES_JSON:-}" ]; then
             echo '❌ سر GOOGLE_SERVICES_JSON غير موجود.'
-            echo '   إشعارات FCM لن تعمل في التطبيق بدون هذا الملف.'
-            echo '   أضف السر في: Repository → Settings → Secrets and variables → Actions'
-            echo '   اسم السر: GOOGLE_SERVICES_JSON'
             exit 1
           fi
 
           printf '%s' "${GOOGLE_SERVICES_JSON}" > android/app/google-services.json
 
-          # حماية google-services.json من الرفع للـ git (في حال عدم وجود .gitignore)
           if ! grep -q 'google-services.json' .gitignore 2>/dev/null; then
             echo 'android/app/google-services.json' >> .gitignore
           fi
 
-          # Root build.gradle: إضافة classpath عبر Python (أكثر موثوقية من sed)
+          # تحديد APP_ID الديناميكي (نفس المنطق في الخطوة السابقة)
+          if [ "${STORE_ID}" != "0" ] && [ -n "${STORE_ID}" ]; then
+              APP_ID="com.dukkani.store${STORE_ID}"
+          else
+              APP_ID="com.dukkani.app"
+          fi
+
+          # 1. تعديل google-services.json ليطابق الـ applicationId الديناميكي
+          python3 - "$APP_ID" <<'PY'
+          import json, sys
+          from pathlib import Path
+          
+          gs_path = Path('android/app/google-services.json')
+          if gs_path.exists():
+              data = json.loads(gs_path.read_text())
+              new_pkg = sys.argv[1]
+              
+              # تحديث اسم الحزمة في جميع العملاء داخل الملف ليطابق التطبيق الديناميكي
+              for client in data.get('client', []):
+                  if 'client_info' in client and 'android_client_info' in client['client_info']:
+                      client['client_info']['android_client_info']['package_name'] = new_pkg
+                  if 'package_name' in client:
+                      client['package_name'] = new_pkg
+                      
+              gs_path.write_text(json.dumps(data, indent=2))
+              print(f'✅ Patched google-services.json with package_name: {new_pkg}')
+          PY
+
+          # 2. إضافة classpath إلى root build.gradle
           python3 - android/build.gradle <<'PY'
           from pathlib import Path
           import sys, re
@@ -564,10 +588,10 @@ jobs:
               path.write_text(text)
               print('✅ classpath added to root build.gradle')
           else:
-              print('ℹ️ classpath already present in root build.gradle')
+              print('ℹ️ classpath already present')
           PY
 
-          # App build.gradle: apply plugin + firebase-messaging
+          # 3. تطبيق الـ plugin في app/build.gradle (بدون إضافة firebase-messaging يدوياً لتجنب Duplicate Classes)
           python3 - android/app/build.gradle <<'PY'
           from pathlib import Path
           import sys, re
@@ -582,7 +606,7 @@ jobs:
                       m.group(1) + "\napply plugin: 'com.google.gms.google-services'",
                       1,
                   )
-                  print('✅ google-services added after com.android.application (legacy DSL)')
+                  print('✅ google-services plugin applied')
               else:
                   text = re.sub(
                       r'(plugins\s*{\s*\n)',
@@ -594,19 +618,12 @@ jobs:
           else:
               print('ℹ️ google-services already applied')
 
-          if 'firebase-messaging' not in text:
-              text = re.sub(
-                  r'(dependencies\s*{)',
-                  r'\1\n    implementation platform("com.google.firebase:firebase-bom:33.0.0")\n    implementation "com.google.firebase:firebase-messaging"',
-                  text,
-                  count=1,
-              )
-              print('✅ firebase-messaging dependencies added')
-
+          # ⚠️ تم حذف إضافة firebase-messaging يدوياً لتجنب تعارض الـ Duplicate Classes مع @capacitor/push-notifications
+          
           path.write_text(text)
           PY
-          echo '✅ تم إعداد Firebase وGoogle Services.'
-
+          echo '✅ تم إعداد Firebase وGoogle Services بنجاح وتطابقها مع المعرف الديناميكي.'
+          
       - name: Build release APK
         working-directory: android
         shell: bash
